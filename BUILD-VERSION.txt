@@ -1,0 +1,14 @@
+Weddings By Mark Growth Engine
+Version: 1.0.1
+Build: 2026.09.06-growth-engine-v1.0.1
+
+Release type: Safe standalone foundation
+
+This release uses its own PostgreSQL database and does not directly read from or write to the Weddings By Mark booking database.
+
+Source workflow: GitHub repository `valianktni1/wbm-growth-engine`, branch `main`.
+
+Initial safety switches:
+- Booking-system enquiry forwarding: off
+- Automatic email sending: off
+- Personal follow-ups: approval required

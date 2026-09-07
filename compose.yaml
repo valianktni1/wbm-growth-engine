@@ -1,0 +1,87 @@
+name: wbm-growth-engine
+
+services:
+  database:
+    image: postgres:16-alpine
+    container_name: wbm-growth-engine-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: growthengine
+      POSTGRES_USER: growthengine
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - /mnt/apps/wbm-growth-engine/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U growthengine -d growthengine"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - growth-network
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wbm-growth-engine-app
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ./.env
+    environment:
+      APP_NAME: Weddings By Mark Growth Engine
+      APP_ENV: production
+      APP_URL: ${APP_URL:-https://growth.weddingsbymark.uk}
+      DATABASE_URL: postgresql+psycopg://growthengine:${POSTGRES_PASSWORD}@database:5432/growthengine
+      STORAGE_ROOT: /data/storage
+      BACKUP_ROOT: /backups
+      COOKIE_SECURE: "true"
+      BOOKING_BASE_URL: ${BOOKING_BASE_URL:-https://booking.weddingsbymark.uk}
+    ports:
+      - 30110:8000
+    volumes:
+      - /mnt/apps/wbm-growth-engine/storage:/data/storage
+      - /mnt/weddings_backups/wbm-growth-engine:/backups
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - growth-network
+
+  backup:
+    image: postgres:16-alpine
+    container_name: wbm-growth-engine-backup
+    restart: unless-stopped
+    environment:
+      PGHOST: database
+      PGDATABASE: growthengine
+      PGUSER: growthengine
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-60}
+    volumes:
+      - /mnt/weddings_backups/wbm-growth-engine:/backups
+      - ./scripts/backup-loop.sh:/usr/local/bin/backup-loop.sh:ro
+    command: ["sh", "/usr/local/bin/backup-loop.sh"]
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - growth-network
+
+networks:
+  growth-network:
+    name: wbm-growth-engine-network

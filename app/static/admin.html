@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Weddings By Mark Growth Engine</title>
+  <link rel="stylesheet" href="/static/app.css?v=1.0.0">
+  <script src="/static/app.js?v=1.0.0" defer></script>
+</head>
+<body>
+  <div id="app" hidden>
+    <header class="topbar">
+      <button class="mobile-menu" id="mobile-menu" type="button" aria-label="Open menu">☰</button>
+      <a class="brand" href="#dashboard"><span>Weddings By Mark</span><strong>Growth Engine</strong></a>
+      <nav id="navigation" aria-label="Main navigation">
+        <button data-view="dashboard" class="active" type="button">Dashboard</button>
+        <button data-view="enquiries" type="button">Enquiries</button>
+        <button data-view="followups" type="button">Follow-ups</button>
+        <button data-view="venues" type="button">Venues</button>
+      </nav>
+      <button class="profile" id="logout" type="button"><span id="admin-name">Mark</span><i>MP</i></button>
+    </header>
+    <main id="workspace" tabindex="-1"></main>
+  </div>
+  <div id="loading" class="loading-screen"><div class="spinner"></div><p>Opening your Growth Engine…</p></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
+

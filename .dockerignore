@@ -1,0 +1,13 @@
+.env
+.venv
+.pytest_cache
+__pycache__
+*.pyc
+*.db
+tests
+preview-storage
+preview-backups
+test-storage
+test-backups
+*.zip
+

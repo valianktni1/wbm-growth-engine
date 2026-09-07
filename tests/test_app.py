@@ -64,7 +64,19 @@ def test_complete_enquiry_and_proposal_journey(monkeypatch):
         assert activity.status_code == 204
         detail = client.get(f"/api/admin/leads/{lead['id']}").json()
         assert detail["stage"] == "engaged"
-        assert len(detail["automations"]) == 3
+        assert len(detail["automations"]) == 0  # Publishing is not sending.
+        assert lead['proposal']['testimonials'] == []
+        assert 'Open secure booking area' not in page.text
+        blocked = client.post(f"/api/admin/leads/{lead['id']}/proposal/send", headers={"X-CSRF-Token": csrf})
+        assert blocked.status_code == 409
+        monkeypatch.setattr(main.settings, 'automation_send_enabled', True)
+        monkeypatch.setattr(main, 'send_email', lambda *args: None)
+        sent = client.post(f"/api/admin/leads/{lead['id']}/proposal/send", headers={"X-CSRF-Token": csrf})
+        assert sent.status_code == 200
+        detail = client.get(f"/api/admin/leads/{lead['id']}").json()
+        assert len(detail['automations']) == 3
+        repeat = client.post(f"/api/admin/leads/{lead['id']}/proposal/send", headers={"X-CSRF-Token": csrf})
+        assert repeat.status_code == 409
 
 
 def test_public_enquiry_requires_privacy(monkeypatch):

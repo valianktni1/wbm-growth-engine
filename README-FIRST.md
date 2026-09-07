@@ -1,5 +1,7 @@
 # Weddings By Mark Growth Engine
 
+CURRENT RELEASE: V1.0.2, setup testing only. Read SETUP-STATUS-V1.0.2.md first; it corrects the scope and supersedes earlier deployment/feature claims. Leave sending and forwarding disabled.
+
 Version 1.0.1 is a standalone, self-hosted enquiry conversion application for TrueNAS SCALE and Dockge.
 
 The intended source workflow is GitHub Desktop → `valianktni1/wbm-growth-engine` main branch → TrueNAS/Dockge. The repository can be made private after TrueNAS has pulled the required revision.

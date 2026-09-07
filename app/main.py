@@ -64,7 +64,7 @@ async def lifespan(_: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title=settings.app_name, version="1.0.0", docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="1.0.2", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -210,6 +210,8 @@ def create_lead(payload: PublicEnquiryIn, request: Request, db: Session, should_
     db.add(Activity(lead_id=lead.id, kind="enquiry_received", label="Website enquiry received",
                     details={"source": lead.referral_source or "Not specified", "availability": available}))
     if should_forward:
+        lead.booking_sync_status = "pending"
+        db.commit()  # Persist the enquiry before making an external request.
         lead.booking_sync_status, lead.booking_sync_error = forward_to_booking(raw)
     db.commit()
     return load_lead(db, lead.id)
@@ -307,7 +309,6 @@ def publish_proposal(lead_id: str, _: Admin = Depends(csrf_admin), db: Session =
     lead = load_lead(db, lead_id)
     lead.proposal.published = True
     lead.stage = "proposal"
-    schedule_proposal_followups(db, lead)
     db.add(Activity(lead_id=lead.id, kind="proposal_published", label="Personal proposal published"))
     db.commit()
     return proposal_json(lead.proposal)
@@ -318,6 +319,10 @@ def email_proposal(lead_id: str, _: Admin = Depends(csrf_admin), db: Session = D
     lead = load_lead(db, lead_id)
     if not lead.proposal.published:
         raise HTTPException(409, "Publish the proposal before emailing it")
+    if not settings.automation_send_enabled:
+        raise HTTPException(409, "Email sending is disabled for setup testing")
+    if lead.proposal.sent_at:
+        raise HTTPException(409, "This proposal has already been emailed")
     url = proposal_json(lead.proposal)["url"]
     subject = f"Your wedding photography information – {lead.primary_first_name} & {lead.partner_first_name}"
     body = f"Hi {lead.primary_first_name},\n\nThank you again for getting in touch about your wedding at {lead.venue}. I have prepared your personal wedding information here:\n\n{url}\n\nIf you have any questions, simply reply to this email.\n\nMark\nWeddings By Mark\n{settings.business_phone}"
@@ -326,6 +331,8 @@ def email_proposal(lead_id: str, _: Admin = Depends(csrf_admin), db: Session = D
     except Exception as exc:
         raise HTTPException(503, f"The proposal is published but the email could not be sent: {str(exc)}")
     lead.proposal.sent_at = datetime.now(timezone.utc)
+    lead.proposal.expires_at = lead.proposal.sent_at + timedelta(days=settings.proposal_days_valid)
+    schedule_proposal_followups(db, lead)
     db.add(Activity(lead_id=lead.id, kind="proposal_sent", label="Personal proposal emailed"))
     db.commit()
     return {"ok": True, "sent_to": lead.email}
@@ -357,8 +364,11 @@ def public_proposal(slug: str, token: str, request: Request, db: Session = Depen
     item = db.scalar(select(Proposal).where(Proposal.slug == slug, Proposal.access_token == token, Proposal.published.is_(True)).options(selectinload(Proposal.lead)))
     if not item:
         raise HTTPException(404, "This proposal is not available")
+    if item.expires_at and item.expires_at.replace(tzinfo=timezone.utc) <= datetime.now(timezone.utc):
+        raise HTTPException(410, "This proposal has expired. Please contact Mark.")
+    availability = check_booking_availability(item.lead.event_date)
     return templates.TemplateResponse(request=request, name="proposal.html", context={"proposal": item, "lead": item.lead,
-                                      "booking_action_url": settings.booking_action_url, "business_phone": settings.business_phone})
+                                      "availability": availability, "business_phone": settings.business_phone})
 
 
 @app.post("/api/public/proposals/{token}/activity", status_code=204)

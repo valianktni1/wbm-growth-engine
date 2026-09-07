@@ -1,5 +1,7 @@
 # GitHub, TrueNAS and Dockge deployment
 
+V1.0.2: use only for setup testing. Read SETUP-STATUS-V1.0.2.md. Do not enable sending or booking forwarding based on the older test checklist below; integration remains unfinished.
+
 ## Create the GitHub repository
 
 1. Extract the complete Growth Engine ZIP on the computer running GitHub Desktop.

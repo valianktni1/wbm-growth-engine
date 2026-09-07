@@ -1,8 +1,8 @@
 Weddings By Mark Growth Engine
-Version: 1.0.1
-Build: 2026.09.06-growth-engine-v1.0.1
+Version: 1.0.2
+Build: 2026.09.07-growth-engine-v1.0.2
 
-Release type: Safe standalone foundation
+Release type: Setup testing only — read SETUP-STATUS-V1.0.2.md
 
 This release uses its own PostgreSQL database and does not directly read from or write to the Weddings By Mark booking database.
 

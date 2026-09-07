@@ -23,10 +23,7 @@ DEFAULT_PACKAGES = [
     {"code": "platinum", "name": "Platinum – Complete Photo & Video", "price": 1299, "description": "Photography, highlight film, full ceremony and speeches, with a two-person team."},
 ]
 
-DEFAULT_TESTIMONIALS = [
-    {"quote": "From the moment Mark arrived, he fitted in like one of the guests. The photographs were incredible.", "name": "A Weddings By Mark couple"},
-    {"quote": "We could not believe how quickly our complete gallery arrived. Every part of the day was captured naturally.", "name": "A Weddings By Mark couple"},
-]
+DEFAULT_TESTIMONIALS = []  # Only verified, owner-supplied reviews may be published.
 
 
 def check_booking_availability(event_date) -> str:
@@ -85,13 +82,13 @@ def create_default_proposal(db: Session, lead: Lead) -> Proposal:
         lead_id=lead.id,
         slug=f"{base}-{secrets.token_hex(3)}",
         access_token=secrets.token_urlsafe(24),
-        headline=f"Brilliant news, {lead.primary_first_name} & {lead.partner_first_name}",
-        introduction=f"Thank you for asking me about your wedding at {lead.venue}. Your date is currently {lead.availability.lower()}.",
+        headline=f"Your wedding, {lead.primary_first_name} & {lead.partner_first_name}",
+        introduction=f"Thank you for asking me about your wedding at {lead.venue}. Please check the date status below and contact me before making plans.",
         personal_message="I would love to hear a little more about the day you are planning. Everything below can be tailored around the two of you.",
         packages=DEFAULT_PACKAGES,
         testimonials=DEFAULT_TESTIMONIALS,
         media=[],
-        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.proposal_days_valid),
+        expires_at=None,
     )
     db.add(proposal)
     db.flush()
@@ -99,7 +96,9 @@ def create_default_proposal(db: Session, lead: Lead) -> Proposal:
 
 
 def schedule_proposal_followups(db: Session, lead: Lead) -> None:
-    now = datetime.now(timezone.utc)
+    if not lead.proposal.sent_at:
+        return
+    now = lead.proposal.sent_at
     proposal_url = f"{settings.app_url.rstrip('/')}/p/{lead.proposal.slug}/{lead.proposal.access_token}"
     rows = [
         ("followup_24h", now + timedelta(hours=24), f"Just checking you received your wedding information", f"Hi {lead.primary_first_name},\n\nI just wanted to make sure the wedding information I sent arrived safely. You can return to it here:\n\n{proposal_url}\n\nThere is absolutely no pressure. If you have any questions, simply reply and I will be happy to help.\n\nMark\nWeddings By Mark"),
@@ -163,4 +162,3 @@ def process_due_automations(db: Session) -> int:
 def visitor_fingerprint(ip: str, user_agent: str) -> str:
     value = f"{settings.session_secret}|{ip}|{user_agent}".encode()
     return hashlib.sha256(value).hexdigest()
-

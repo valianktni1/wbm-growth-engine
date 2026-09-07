@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from .config import get_settings
 from .db import Base, SessionLocal, engine, get_db
-from .models import Activity, Admin, Automation, Lead, Proposal
+from .models import Activity, Admin, Automation, BookingEventReceipt, Lead, Proposal
 from .schemas import ActivityIn, AutomationPatchIn, BookingWebhookIn, LeadCreateIn, LeadPatchIn, LoginIn, ProposalPatchIn, PublicEnquiryIn
 from .security import csrf_admin, current_admin, hash_password, make_session, verify_password
 from .services import check_booking_availability, create_default_proposal, forward_to_booking, process_due_automations, schedule_proposal_followups, send_email, visitor_fingerprint
@@ -64,7 +64,7 @@ async def lifespan(_: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title=settings.app_name, version="1.0.2", docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="1.0.3", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -186,12 +186,14 @@ def rate_limit(request: Request) -> None:
     hits[ip] = recent
 
 
-def create_lead(payload: PublicEnquiryIn, request: Request, db: Session, should_forward: bool) -> Lead:
+def create_lead(payload: PublicEnquiryIn, request: Request, db: Session, should_forward: bool,
+                origin: str = "website") -> Lead:
     if payload.website:
         raise HTTPException(400, "Unable to submit this enquiry")
     if not payload.privacy_agreed:
         raise HTTPException(422, "Please agree to the privacy notice")
-    rate_limit(request)
+    if origin == "website":
+        rate_limit(request)
     duplicate_cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
     duplicate = db.scalar(select(Lead).where(Lead.email == str(payload.email).lower(), Lead.event_date == payload.event_date, Lead.created_at >= duplicate_cutoff))
     if duplicate:
@@ -207,49 +209,124 @@ def create_lead(payload: PublicEnquiryIn, request: Request, db: Session, should_
     db.add(lead)
     db.flush()
     create_default_proposal(db, lead)
-    db.add(Activity(lead_id=lead.id, kind="enquiry_received", label="Website enquiry received",
+    label = "Manual enquiry added" if origin == "manual" else "Website enquiry received"
+    db.add(Activity(lead_id=lead.id, kind="enquiry_received", label=label,
                     details={"source": lead.referral_source or "Not specified", "availability": available}))
     if should_forward:
         lead.booking_sync_status = "pending"
         db.commit()  # Persist the enquiry before making an external request.
-        lead.booking_sync_status, lead.booking_sync_error = forward_to_booking(raw)
+        lead.booking_sync_status, lead.booking_sync_error, booking_id = forward_to_booking(raw, lead.id)
+        if booking_id:
+            lead.external_booking_id = booking_id
     db.commit()
     return load_lead(db, lead.id)
 
 
 @app.post("/api/public/enquiries", status_code=201)
 def public_enquiry(payload: PublicEnquiryIn, request: Request, db: Session = Depends(get_db)):
-    lead = create_lead(payload, request, db, settings.booking_enquiry_forwarding)
+    lead = create_lead(payload, request, db, False, "website")
     return {"ok": True, "message": "Thank you – your enquiry has arrived safely.", "availability": lead.availability}
+
+
+def require_booking_key(x_integration_key: str | None) -> None:
+    if not settings.booking_webhook_key or not x_integration_key or not hmac.compare_digest(settings.booking_webhook_key, x_integration_key):
+        raise HTTPException(401, "Integration key is missing or invalid")
+
+
+@app.get("/api/integrations/booking/health")
+def booking_integration_health(x_integration_key: str | None = Header(default=None)):
+    require_booking_key(x_integration_key)
+    return {"ok": True, "app": settings.app_name, "direction": "booking-to-growth"}
+
+
+def booking_stage(payload: BookingWebhookIn) -> str:
+    if payload.booking_status == "cancelled":
+        return "lost"
+    if payload.booking_status in {"confirmed", "in_progress", "completed"} or payload.deposit_paid:
+        return "booked"
+    if payload.quote_accepted:
+        return "engaged"
+    if payload.booking_status == "quoted":
+        return "qualified"
+    return "new"
+
+
+def merged_booking_stage(current: str, incoming: str) -> str:
+    """Do not let an ordinary booking edit erase stronger Growth engagement."""
+    if incoming in {"booked", "lost"}:
+        return incoming
+    if current in {"booked", "lost"}:
+        return incoming  # An authoritative booking reopen reverses a terminal state.
+    rank = {"new": 0, "qualified": 1, "proposal": 2, "engaged": 3}
+    return incoming if rank.get(incoming, 0) >= rank.get(current, 0) else current
 
 
 @app.post("/api/integrations/booking/enquiry", status_code=201)
 def booking_enquiry_webhook(payload: BookingWebhookIn, x_integration_key: str | None = Header(default=None), db: Session = Depends(get_db)):
-    if not settings.booking_webhook_key or not x_integration_key or not hmac.compare_digest(settings.booking_webhook_key, x_integration_key):
-        raise HTTPException(401, "Integration key is missing or invalid")
+    require_booking_key(x_integration_key)
+    if payload.event_id and db.get(BookingEventReceipt, payload.event_id):
+        existing = db.scalar(select(Lead).where(Lead.external_booking_id == payload.booking_id))
+        return {"ok": True, "already_processed": True, "lead_id": existing.id if existing else None}
     existing = db.scalar(select(Lead).where(Lead.external_booking_id == payload.booking_id))
-    if existing:
-        return {"ok": True, "duplicate_ignored": True, "lead_id": existing.id}
+    was_existing = bool(existing)
     availability = check_booking_availability(payload.event_date)
-    lead = Lead(external_booking_id=payload.booking_id, primary_first_name=payload.primary_first_name.strip(),
-                partner_first_name=payload.partner_first_name.strip(), email=str(payload.email).lower(), phone=payload.phone,
-                event_date=payload.event_date, venue=payload.venue.strip(), venue_address=payload.venue_address,
-                package_interest=payload.package_interest, referral_source=payload.referral_source,
-                landing_page=payload.landing_page, campaign=payload.campaign, message=payload.message,
-                availability=availability, booking_sync_status="source")
-    db.add(lead)
-    db.flush()
-    create_default_proposal(db, lead)
-    db.add(Activity(lead_id=lead.id, kind="enquiry_received", label="Booking-system enquiry received",
-                    details={"source": lead.referral_source or "Not specified", "availability": availability}))
+    new_stage = booking_stage(payload)
+    if existing:
+        lead = existing
+        previous_stage = lead.stage
+        lead.primary_first_name = payload.primary_first_name.strip()
+        lead.partner_first_name = payload.partner_first_name.strip()
+        lead.email = str(payload.email).lower()
+        lead.phone = payload.phone
+        lead.event_date = payload.event_date
+        lead.venue = payload.venue.strip()
+        lead.venue_address = payload.venue_address
+        lead.package_interest = payload.package_interest
+        lead.referral_source = payload.referral_source or lead.referral_source
+        lead.landing_page = payload.landing_page or lead.landing_page
+        lead.campaign = payload.campaign or lead.campaign
+        lead.message = payload.message or lead.message
+        lead.availability = availability
+        lead.estimated_value = payload.estimated_value
+        lead.booking_sync_status = "source"
+        lead.booking_sync_error = None
+        lead.stage = merged_booking_stage(previous_stage, new_stage)
+        if previous_stage != lead.stage:
+            db.add(Activity(lead_id=lead.id, kind="booking_status_changed",
+                            label=f"Booking system updated: {lead.stage}",
+                            details={"previous_stage": previous_stage,
+                                     "booking_status": payload.booking_status,
+                                     "deposit_paid": payload.deposit_paid}))
+    else:
+        lead = Lead(external_booking_id=payload.booking_id, primary_first_name=payload.primary_first_name.strip(),
+                    partner_first_name=payload.partner_first_name.strip(), email=str(payload.email).lower(), phone=payload.phone,
+                    event_date=payload.event_date, venue=payload.venue.strip(), venue_address=payload.venue_address,
+                    package_interest=payload.package_interest, referral_source=payload.referral_source,
+                    landing_page=payload.landing_page, campaign=payload.campaign, message=payload.message,
+                    availability=availability, booking_sync_status="source", stage=new_stage,
+                    estimated_value=payload.estimated_value)
+        db.add(lead)
+        db.flush()
+        create_default_proposal(db, lead)
+        db.add(Activity(lead_id=lead.id, kind="enquiry_received", label="Booking-system enquiry received",
+                        details={"source": lead.referral_source or "Not specified", "availability": availability}))
+    if lead.stage in {"booked", "lost"}:
+        for automation in db.scalars(select(Automation).where(
+                Automation.lead_id == lead.id, Automation.status == "scheduled")).all():
+            automation.status = "cancelled"
+            automation.error = f"Cancelled automatically because booking status became {new_stage}"
+    if payload.event_id:
+        db.add(BookingEventReceipt(event_id=payload.event_id, booking_id=payload.booking_id))
     db.commit()
-    return {"ok": True, "lead_id": lead.id, "proposal_created": True}
+    return {"ok": True, "status": "synchronised", "lead_id": lead.id,
+            "proposal_created": not was_existing, "duplicate_ignored": was_existing and not payload.event_id,
+            "stage": lead.stage}
 
 
 @app.post("/api/admin/leads", status_code=201)
 def admin_create_lead(payload: LeadCreateIn, request: Request, _: Admin = Depends(csrf_admin), db: Session = Depends(get_db)):
     public_payload = PublicEnquiryIn(**payload.model_dump(exclude={"forward_to_booking"}))
-    return lead_json(create_lead(public_payload, request, db, payload.forward_to_booking), True)
+    return lead_json(create_lead(public_payload, request, db, settings.booking_enquiry_forwarding, "manual"), True)
 
 
 @app.get("/api/admin/dashboard")

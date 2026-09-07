@@ -32,6 +32,7 @@ class LeadCreateIn(PublicEnquiryIn):
 
 
 class BookingWebhookIn(BaseModel):
+    event_id: str | None = Field(default=None, min_length=8, max_length=160)
     booking_id: str = Field(min_length=1, max_length=100)
     primary_first_name: str = Field(min_length=1, max_length=100)
     partner_first_name: str = Field(min_length=1, max_length=100)
@@ -45,7 +46,13 @@ class BookingWebhookIn(BaseModel):
     landing_page: str | None = Field(default=None, max_length=2000)
     campaign: str | None = Field(default=None, max_length=200)
     message: str | None = Field(default=None, max_length=5000)
+    booking_status: Literal["enquiry", "quoted", "confirmed", "in_progress", "completed", "cancelled"] = "enquiry"
+    quote_accepted: bool = False
+    deposit_paid: bool = False
+    estimated_value: Decimal = Field(default=Decimal("0"), ge=0)
+    is_test: bool = False
     received_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class LeadPatchIn(BaseModel):

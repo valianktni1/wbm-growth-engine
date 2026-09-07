@@ -58,6 +58,14 @@ class Lead(Base):
         return f"{self.primary_first_name} & {self.partner_first_name}"
 
 
+class BookingEventReceipt(Base):
+    """Idempotency receipt for a booking-system snapshot."""
+    __tablename__ = "booking_event_receipts"
+    event_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    booking_id: Mapped[str] = mapped_column(String(100), index=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Proposal(Base):
     __tablename__ = "proposals"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)

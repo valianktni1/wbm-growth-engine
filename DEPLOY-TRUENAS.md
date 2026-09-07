@@ -1,6 +1,8 @@
 # GitHub, TrueNAS and Dockge deployment
 
-V1.0.2: use only for setup testing. Read SETUP-STATUS-V1.0.2.md. Do not enable sending or booking forwarding based on the older test checklist below; integration remains unfinished.
+V1.0.3 includes the paired BookingSystem2026 V8.37 connector. Keep sending,
+automatic booking sync and manual-enquiry forwarding off until the connection
+and one test record have been verified.
 
 ## Create the GitHub repository
 
@@ -30,10 +32,14 @@ sudo mkdir -p /mnt/apps/wbm-growth-engine/storage
 sudo mkdir -p /mnt/weddings_backups/wbm-growth-engine/database
 sudo chown -R 70:70 /mnt/apps/wbm-growth-engine/postgres
 sudo chown -R 10001:10001 /mnt/apps/wbm-growth-engine/storage
-sudo chown -R 70:70 /mnt/weddings_backups/wbm-growth-engine
+sudo chown -R 0:0 /mnt/weddings_backups/wbm-growth-engine
+sudo chmod 750 /mnt/weddings_backups/wbm-growth-engine
+sudo chmod 750 /mnt/weddings_backups/wbm-growth-engine/database
 ```
 
-PostgreSQL Alpine uses user/group 70. The Growth Engine application uses user/group 10001.
+PostgreSQL Alpine uses user/group 70. The Growth Engine application uses
+user/group 10001. The deliberately capability-dropped backup loop runs as
+container root, so its private backup dataset is owned by root with mode 750.
 
 ## Pull the main branch into Dockge
 
@@ -93,9 +99,14 @@ The application uses host port `30110` so Nginx Proxy Manager can reach it from 
 6. Click a package and confirm the activity appears in the enquiry.
 7. Configure SMTP and test sending to your own email address.
 8. Confirm three prepared follow-ups exist but are not sent.
-9. Only after the complete journey passes, enable booking forwarding.
+9. Deploy the paired BookingSystem2026 V8.37 connector and verify one test
+   booking before enabling either automatic sync or manual-enquiry forwarding.
 
-The preferred final integration keeps your existing booking form unchanged. The booking system sends one signed notification to `/api/integrations/booking/enquiry` after it safely commits a new enquiry. `BOOKING_WEBHOOK_KEY` must be the same independent 64-character value in both applications. The endpoint is idempotent, so a retry cannot create a duplicate Growth Engine enquiry.
+The existing website form remains unchanged and enters the booking system
+first. BookingSystem2026 V8.37 sends authenticated idempotent snapshots to
+`/api/integrations/booking/enquiry`. The same independent 64-character secret
+is stored as `BOOKING_WEBHOOK_KEY` here and `GROWTH_INTEGRATION_KEY` in the
+booking system. Neither application reads the other's database.
 
 ## Backups
 
@@ -104,6 +115,13 @@ The backup container writes one custom-format PostgreSQL dump every 24 hours to:
 `/mnt/weddings_backups/wbm-growth-engine/database`
 
 Every dump receives a SHA-256 checksum. The default retention is 60 days. TrueNAS snapshots can protect both datasets separately.
+
+Verify a dump from the host using:
+
+```bash
+cd /mnt/weddings_backups/wbm-growth-engine/database
+sudo sha256sum -c growth-engine-YYYYMMDD-HHMMSS.dump.sha256
+```
 
 ## GitHub update procedure
 

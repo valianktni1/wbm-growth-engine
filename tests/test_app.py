@@ -124,3 +124,40 @@ def test_booking_webhook_is_authenticated_and_idempotent(monkeypatch):
         repeated = client.post("/api/integrations/booking/enquiry", headers=headers, json=payload)
         assert repeated.status_code == 201
         assert repeated.json()["duplicate_ignored"] is True
+
+
+def test_booking_snapshots_update_stage_and_are_idempotent(monkeypatch):
+    monkeypatch.setattr(main, "check_booking_availability", lambda _: "Booked")
+    headers = {"X-Integration-Key": os.environ["BOOKING_WEBHOOK_KEY"]}
+    base = {
+        "booking_id": "booking-snapshot-456", "primary_first_name": "Ava",
+        "partner_first_name": "Noah", "email": "ava@example.com",
+        "event_date": "2028-04-22", "venue": "Test Barn",
+        "package_interest": "Gold", "referral_source": "Website",
+    }
+    with TestClient(main.app) as client:
+        created = client.post("/api/integrations/booking/enquiry", headers=headers,
+                              json={**base, "event_id": "booking-snapshot-456-v1"})
+        assert created.status_code == 201
+        lead_id = created.json()["lead_id"]
+        assert created.json()["stage"] == "new"
+
+        booked = client.post("/api/integrations/booking/enquiry", headers=headers, json={
+            **base, "event_id": "booking-snapshot-456-v2", "booking_status": "confirmed",
+            "deposit_paid": True, "estimated_value": 899,
+        })
+        assert booked.status_code == 201
+        assert booked.json()["lead_id"] == lead_id
+        assert booked.json()["stage"] == "booked"
+
+        repeated = client.post("/api/integrations/booking/enquiry", headers=headers, json={
+            **base, "event_id": "booking-snapshot-456-v2", "booking_status": "confirmed",
+            "deposit_paid": True, "estimated_value": 899,
+        })
+        assert repeated.json()["already_processed"] is True
+
+        cancelled = client.post("/api/integrations/booking/enquiry", headers=headers, json={
+            **base, "event_id": "booking-snapshot-456-v3", "booking_status": "cancelled",
+            "estimated_value": 899,
+        })
+        assert cancelled.json()["stage"] == "lost"

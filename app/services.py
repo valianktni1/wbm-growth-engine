@@ -37,40 +37,42 @@ def check_booking_availability(event_date) -> str:
         return "Unknown"
 
 
-def forward_to_booking(payload: dict) -> tuple[str, str | None]:
+def forward_to_booking(payload: dict, growth_lead_id: str) -> tuple[str, str | None, str | None]:
     if not settings.booking_enquiry_forwarding:
-        return "disabled", None
+        return "disabled", None, None
     booking_payload = {
+        "event_id": f"growth-enquiry:{growth_lead_id}",
+        "growth_lead_id": growth_lead_id,
         "primary_first_name": payload["primary_first_name"],
         "partner_first_name": payload["partner_first_name"],
         "email": payload["email"],
         "phone": payload.get("phone"),
         "event_date": str(payload["event_date"]),
-        "location": payload["location"],
+        "venue": payload["location"],
         "venue_address": payload.get("venue_address"),
         "package_interest": payload.get("package_interest"),
         "message": payload.get("message"),
-        "heard_about_us": payload.get("heard_about_us") or "Not specified",
-        "privacy_agreed": True,
-        "website": "",
-        "custom_answers": {},
+        "referral_source": payload.get("heard_about_us") or "Not specified",
+        "is_test": False,
     }
     request = Request(
-        f"{settings.booking_base_url}/api/public/enquiries",
+        f"{settings.booking_base_url}/api/integrations/growth/enquiry",
         data=json.dumps(booking_payload).encode(),
-        headers={"Content-Type": "application/json", "User-Agent": "WBM-Growth-Engine/1.0"},
+        headers={"Content-Type": "application/json", "X-Integration-Key": settings.booking_webhook_key,
+                 "User-Agent": "WBM-Growth-Engine/1.0.3"},
         method="POST",
     )
     try:
         with urlopen(request, timeout=settings.booking_timeout_seconds) as response:
             if 200 <= response.status < 300:
-                return "synced", None
-            return "failed", f"Booking system returned HTTP {response.status}"
+                result = json.loads(response.read().decode("utf-8"))
+                return "synced", None, result.get("booking_id")
+            return "failed", f"Booking system returned HTTP {response.status}", None
     except HTTPError as exc:
         detail = exc.read(500).decode(errors="replace")
-        return "failed", f"HTTP {exc.code}: {detail}"[:1000]
+        return "failed", f"HTTP {exc.code}: {detail}"[:1000], None
     except (URLError, TimeoutError) as exc:
-        return "failed", str(exc)[:1000]
+        return "failed", str(exc)[:1000], None
 
 
 def create_default_proposal(db: Session, lead: Lead) -> Proposal:

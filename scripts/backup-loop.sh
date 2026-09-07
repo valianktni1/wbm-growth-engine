@@ -10,7 +10,10 @@ while true; do
 
   if pg_dump --format=custom --file="$temporary"; then
     mv "$temporary" "$final"
-    sha256sum "$final" > "${final}.sha256"
+    (
+      cd /backups/database
+      sha256sum "$(basename "$final")" > "$(basename "$final").sha256"
+    )
   else
     rm -f "$temporary"
   fi
@@ -19,4 +22,3 @@ while true; do
   find /backups/database -type f -name 'growth-engine-*.dump.sha256' -mtime "+${BACKUP_RETENTION_DAYS:-60}" -delete
   sleep 86400
 done
-

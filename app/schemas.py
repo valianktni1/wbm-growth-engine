@@ -48,7 +48,10 @@ class BookingWebhookIn(BaseModel):
     message: str | None = Field(default=None, max_length=5000)
     booking_status: Literal["enquiry", "quoted", "confirmed", "in_progress", "completed", "cancelled"] = "enquiry"
     quote_accepted: bool = False
+    quote_status: str | None = Field(default=None, max_length=30)
+    quote_items: list[dict] = Field(default_factory=list, max_length=100)
     deposit_paid: bool = False
+    deposit_amount: Decimal = Field(default=Decimal("0"), ge=0)
     estimated_value: Decimal = Field(default=Decimal("0"), ge=0)
     is_test: bool = False
     received_at: datetime | None = None
@@ -82,14 +85,3 @@ class AutomationPatchIn(BaseModel):
     body: str | None = Field(default=None, min_length=1, max_length=10000)
     scheduled_for: datetime | None = None
 
-
-class PackageOptionIn(BaseModel):
-    code: str = Field(min_length=1, max_length=80, pattern=r"^[a-z0-9-]+$")
-    name: str = Field(min_length=1, max_length=160)
-    price: int = Field(ge=0, le=100000)
-    description: str = Field(min_length=1, max_length=1000)
-
-
-class PackageCatalogueIn(BaseModel):
-    packages: list[PackageOptionIn] = Field(min_length=1, max_length=12)
-    apply_to_drafts: bool = True

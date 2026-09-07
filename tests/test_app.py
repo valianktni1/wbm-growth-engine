@@ -39,7 +39,7 @@ def enquiry_payload():
     }
 
 
-def test_complete_enquiry_and_proposal_journey(monkeypatch):
+def test_growth_capture_does_not_create_a_competing_proposal(monkeypatch):
     monkeypatch.setattr(main, "check_booking_availability", lambda _: "Available")
     with TestClient(main.app) as client:
         csrf = login(client)
@@ -47,98 +47,14 @@ def test_complete_enquiry_and_proposal_journey(monkeypatch):
         assert response.status_code == 201, response.text
         lead = response.json()
         assert lead["availability"] == "Available"
-        assert lead["proposal"]["published"] is False
-
-        published = client.post(f"/api/admin/leads/{lead['id']}/proposal/publish", headers={"X-CSRF-Token": csrf})
-        assert published.status_code == 200
-        proposal = published.json()
-        assert proposal["published"] is True
-
-        page = client.get(proposal["url"].replace("http://localhost:30110", ""))
-        assert page.status_code == 200
-        assert "Sophie &amp; Liam" in page.text
-        assert "Heaton House Farm" in page.text
-
-        activity = client.post(f"/api/public/proposals/{lead['proposal']['url'].split('/')[-1]}/activity",
-                               json={"kind": "package_viewed", "label": "Gold selected", "details": {"package": "Gold"}})
-        assert activity.status_code == 204
+        assert lead["proposal"] is None
         detail = client.get(f"/api/admin/leads/{lead['id']}").json()
-        assert detail["stage"] == "engaged"
-        assert len(detail["automations"]) == 0  # Publishing is not sending.
-        assert lead['proposal']['testimonials'] == []
-        assert 'Open secure booking area' not in page.text
-        blocked = client.post(f"/api/admin/leads/{lead['id']}/proposal/send", headers={"X-CSRF-Token": csrf})
-        assert blocked.status_code == 409
-        monkeypatch.setattr(main.settings, 'automation_send_enabled', True)
-        monkeypatch.setattr(main, 'send_email', lambda *args: None)
-        sent = client.post(f"/api/admin/leads/{lead['id']}/proposal/send", headers={"X-CSRF-Token": csrf})
-        assert sent.status_code == 200
-        detail = client.get(f"/api/admin/leads/{lead['id']}").json()
-        assert len(detail['automations']) == 3
-        first, second = detail["automations"][:2]
-        changed = client.patch(
-            f"/api/admin/automations/{first['id']}",
-            headers={"X-CSRF-Token": csrf},
-            json={"subject": "A personally checked follow-up"},
-        )
-        assert changed.status_code == 200
-        assert changed.json()["subject"] == "A personally checked follow-up"
-        approved = client.post(
-            f"/api/admin/automations/{first['id']}/approve",
+        assert detail["automations"] == []
+        retired = client.post(
+            f"/api/admin/leads/{lead['id']}/proposal/publish",
             headers={"X-CSRF-Token": csrf},
         )
-        assert approved.status_code == 200
-        assert approved.json()["approved_at"]
-        revised = client.patch(
-            f"/api/admin/automations/{first['id']}",
-            headers={"X-CSRF-Token": csrf},
-            json={"body": "A revised message that must be approved again."},
-        )
-        assert revised.status_code == 200
-        assert revised.json()["approved_at"] is None
-        cancelled = client.post(
-            f"/api/admin/automations/{second['id']}/cancel",
-            headers={"X-CSRF-Token": csrf},
-        )
-        assert cancelled.status_code == 200
-        assert cancelled.json()["status"] == "cancelled"
-        repeat = client.post(f"/api/admin/leads/{lead['id']}/proposal/send", headers={"X-CSRF-Token": csrf})
-        assert repeat.status_code == 409
-
-
-def test_package_catalogue_can_update_unpublished_drafts(monkeypatch):
-    monkeypatch.setattr(main, "check_booking_availability", lambda _: "Available")
-    with TestClient(main.app) as client:
-        csrf = login(client)
-        payload = enquiry_payload()
-        payload["email"] = "catalogue@example.com"
-        payload["primary_first_name"] = "Catalog"
-        created = client.post(
-            "/api/admin/leads",
-            headers={"X-CSRF-Token": csrf},
-            json={**payload, "forward_to_booking": False},
-        )
-        assert created.status_code == 201
-        lead_id = created.json()["id"]
-
-        current = client.get("/api/admin/settings/package-catalogue")
-        assert current.status_code == 200
-        assert any(item["code"] == "ultimate" and item["price"] == 1799 for item in current.json()["packages"])
-        assert any(item["code"] == "platinum" and item["price"] == 1350 for item in current.json()["packages"])
-
-        packages = [
-            {"code": "bespoke", "name": "Bespoke Collection", "price": 999,
-             "description": "A test package for an unpublished proposal."}
-        ]
-        saved = client.put(
-            "/api/admin/settings/package-catalogue",
-            headers={"X-CSRF-Token": csrf},
-            json={"packages": packages, "apply_to_drafts": True},
-        )
-        assert saved.status_code == 200, saved.text
-        assert saved.json()["drafts_updated"] >= 1
-        detail = client.get(f"/api/admin/leads/{lead_id}").json()
-        assert detail["proposal"]["packages"] == packages
+        assert retired.status_code == 410
 
 
 def test_public_enquiry_requires_privacy(monkeypatch):
@@ -198,6 +114,7 @@ def test_booking_snapshots_update_stage_and_are_idempotent(monkeypatch):
         "package_interest": "Gold", "referral_source": "Website",
     }
     with TestClient(main.app) as client:
+        login(client)
         created = client.post("/api/integrations/booking/enquiry", headers=headers,
                               json={**base, "event_id": "booking-snapshot-456-v1"})
         assert created.status_code == 201
@@ -206,15 +123,30 @@ def test_booking_snapshots_update_stage_and_are_idempotent(monkeypatch):
 
         booked = client.post("/api/integrations/booking/enquiry", headers=headers, json={
             **base, "event_id": "booking-snapshot-456-v2", "booking_status": "confirmed",
-            "deposit_paid": True, "estimated_value": 899,
+            "deposit_paid": True, "deposit_amount": 100, "estimated_value": 1049,
+            "quote_status": "accepted",
+            "quote_items": [
+                {"type": "package", "code": "gold", "name": "Gold", "total": 899},
+                {"type": "addon", "code": "extra-hour", "name": "Extra hour", "total": 150},
+            ],
         })
         assert booked.status_code == 201
         assert booked.json()["lead_id"] == lead_id
         assert booked.json()["stage"] == "booked"
+        detail = client.get(f"/api/admin/leads/{lead_id}").json()
+        assert detail["deposit_amount"] == 100
+        assert detail["quote_status"] == "accepted"
+        assert detail["quote_items"][1]["name"] == "Extra hour"
+        assert detail["booking_record_url"].endswith("/bookings/booking-snapshot-456/overview")
 
         repeated = client.post("/api/integrations/booking/enquiry", headers=headers, json={
             **base, "event_id": "booking-snapshot-456-v2", "booking_status": "confirmed",
-            "deposit_paid": True, "estimated_value": 899,
+            "deposit_paid": True, "deposit_amount": 100, "estimated_value": 1049,
+            "quote_status": "accepted",
+            "quote_items": [
+                {"type": "package", "code": "gold", "name": "Gold", "total": 899},
+                {"type": "addon", "code": "extra-hour", "name": "Extra hour", "total": 150},
+            ],
         })
         assert repeated.json()["already_processed"] is True
 

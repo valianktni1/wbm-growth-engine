@@ -1,0 +1,115 @@
+.button-link {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  text-decoration: none;
+}
+
+.large-status {
+  padding: 9px 13px;
+  font-size: 12px;
+}
+
+.card-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 15px;
+}
+
+.card-heading h2,
+.card-heading p {
+  margin: 0;
+}
+
+.card-heading p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.quote-lines {
+  border-top: 1px solid var(--line);
+}
+
+.quote-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 13px 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.quote-line strong,
+.quote-line small {
+  display: block;
+}
+
+.quote-line small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.quote-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  margin: 15px 0;
+}
+
+.quote-summary span {
+  padding: 13px;
+  border-radius: 10px;
+  background: var(--teal-soft);
+}
+
+.quote-summary small,
+.quote-summary strong {
+  display: block;
+}
+
+.quote-summary small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.quote-summary strong {
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+
+.guidance > small {
+  color: var(--teal);
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: .08em;
+}
+
+.guidance p {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.compact {
+  padding: 22px 12px;
+}
+
+@media (max-width: 620px) {
+  .card-heading {
+    display: block;
+  }
+
+  .card-heading .button-link {
+    width: 100%;
+    margin-top: 12px;
+  }
+
+  .quote-summary {
+    grid-template-columns: 1fr;
+  }
+}

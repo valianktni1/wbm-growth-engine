@@ -1,6 +1,6 @@
 # Weddings By Mark Growth Engine
 
-CURRENT RELEASE: V1.1.0. The BookingSystem2026 V8.37 connector is live and this release adds an editable package catalogue and stronger follow-up approval controls. Automatic email sending remains disabled.
+CURRENT RELEASE: V1.1.1. BookingSystem2026 is the single source of truth for packages, add-ons, quotes, contracts, invoices and client emails. Growth Engine is the read-only sales intelligence layer.
 
 Version 1.0.1 is a standalone, self-hosted enquiry conversion application for TrueNAS SCALE and Dockge.
 
@@ -12,21 +12,16 @@ The intended source workflow is GitHub Desktop → `valianktni1/wbm-growth-engin
 - Website and manual enquiry capture.
 - Privacy-safe availability checks through the existing booking system.
 - Optional forwarding into the existing booking system without database access.
-- Automatic private proposal drafts for every enquiry.
-- Personal proposal publishing and email delivery.
-- First-party proposal activity: opens, package interest, film plays and booking clicks.
-- New, qualified, proposal, engaged, booked and lost enquiry stages.
-- Prepared 24-hour, three-day and expiry follow-ups.
-- Approval-required follow-up mode by default.
+- Automatic booking, quote, add-on, value and stage updates from BookingSystem2026.
+- Clear new enquiry, quote sent, quote accepted, booked and lost stages.
+- Suggested next actions without duplicating the Booking System workflow.
+- Read-only display of the package, selected add-ons, discounts, booking fee and total from the real quote.
 - Venue enquiry, booking and revenue summaries.
 - Daily PostgreSQL backups with checksums and retention.
-- A Settings screen for maintaining proposal packages without changing code.
-- Safe application of package changes to unpublished drafts only.
-- Follow-up editing, approval and cancellation; editing an approved message removes its approval so it must be checked again.
 
 ## Important safety defaults
 
-The initial deployment does not automatically send follow-ups and does not forward website enquiries to the booking system. Both switches remain off until the full test journey is verified.
+Growth Engine does not send quotes or client emails. Those remain in BookingSystem2026, preventing duplicate messages or two conflicting versions of a quote.
 
 Do not reuse database, session or administrator passwords from another application.
 

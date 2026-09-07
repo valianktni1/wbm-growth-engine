@@ -1,8 +1,8 @@
 Weddings By Mark Growth Engine
-Version: 1.1.0
-Build: 2026.09.07-package-and-followup-controls-v1.1.0
+Version: 1.1.1
+Build: 2026.09.07-booking-owned-sales-intelligence-v1.1.1
 
-Release type: Business configuration and approval controls.
+Release type: Corrected Booking-owned sales intelligence workflow.
 
 This release keeps its own PostgreSQL database and exchanges authenticated,
 idempotent events with BookingSystem2026 V8.37. Neither app reads the other
@@ -10,7 +10,10 @@ app's database directly.
 
 Source workflow: GitHub repository `valianktni1/wbm-growth-engine`, branch `main`.
 
+Workflow ownership:
+- Packages, add-ons, quotes, contracts, invoices and client emails: BookingSystem2026
+- Read-only sales intelligence, priorities and performance: Growth Engine
+
 Safety switches:
 - Manual-enquiry forwarding to the booking system: off
-- Automatic email sending: off
-- Personal follow-ups: approval required
+- Growth Engine client email sending: disabled in code

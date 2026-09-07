@@ -1,4 +1,3 @@
-import asyncio
 import hmac
 from collections import defaultdict
 from contextlib import asynccontextmanager
@@ -10,15 +9,15 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Res
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
+from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session, selectinload
 
 from .config import get_settings
 from .db import Base, SessionLocal, engine, get_db
-from .models import Activity, Admin, Automation, BookingEventReceipt, Lead, Proposal, Setting
-from .schemas import ActivityIn, AutomationPatchIn, BookingWebhookIn, LeadCreateIn, LeadPatchIn, LoginIn, PackageCatalogueIn, ProposalPatchIn, PublicEnquiryIn
+from .models import Activity, Admin, Automation, BookingEventReceipt, Lead, Proposal
+from .schemas import ActivityIn, AutomationPatchIn, BookingWebhookIn, LeadCreateIn, LeadPatchIn, LoginIn, ProposalPatchIn, PublicEnquiryIn
 from .security import csrf_admin, current_admin, hash_password, make_session, verify_password
-from .services import check_booking_availability, create_default_proposal, forward_to_booking, get_package_catalogue, process_due_automations, schedule_proposal_followups, send_email, visitor_fingerprint
+from .services import check_booking_availability, forward_to_booking, visitor_fingerprint
 
 
 settings = get_settings()
@@ -42,6 +41,16 @@ def bootstrap() -> None:
     settings.storage_root.mkdir(parents=True, exist_ok=True)
     settings.backup_root.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(engine)
+    columns = {column["name"] for column in inspect(engine).get_columns("leads")}
+    additions = {
+        "deposit_amount": "NUMERIC(10, 2)",
+        "quote_status": "VARCHAR(30)",
+        "quote_items": "JSON",
+    }
+    with engine.begin() as connection:
+        for name, sql_type in additions.items():
+            if name not in columns:
+                connection.execute(text(f"ALTER TABLE leads ADD COLUMN {name} {sql_type}"))
     with SessionLocal() as db:
         admin = db.scalar(select(Admin).where(Admin.email == settings.admin_email))
         if not admin:
@@ -49,22 +58,13 @@ def bootstrap() -> None:
             db.commit()
 
 
-async def automation_loop() -> None:
-    while True:
-        await asyncio.sleep(max(30, settings.automation_scan_seconds))
-        with SessionLocal() as db:
-            process_due_automations(db)
-
-
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     bootstrap()
-    task = asyncio.create_task(automation_loop())
     yield
-    task.cancel()
 
 
-app = FastAPI(title=settings.app_name, version="1.1.0", docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="1.1.1", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -82,13 +82,19 @@ async def security_headers(request: Request, call_next):
 
 
 def lead_json(lead: Lead, detail: bool = False) -> dict:
+    booking_record_url = settings.booking_action_url.rstrip("/")
+    if lead.external_booking_id:
+        booking_record_url += f"/bookings/{lead.external_booking_id}/overview"
     data = {
         "id": lead.id, "couple_name": lead.couple_name, "primary_first_name": lead.primary_first_name,
         "external_booking_id": lead.external_booking_id,
         "partner_first_name": lead.partner_first_name, "email": lead.email, "phone": lead.phone,
         "event_date": lead.event_date.isoformat(), "venue": lead.venue, "package_interest": lead.package_interest,
         "referral_source": lead.referral_source, "availability": lead.availability, "stage": lead.stage,
-        "estimated_value": float(lead.estimated_value or 0), "booking_sync_status": lead.booking_sync_status,
+        "estimated_value": float(lead.estimated_value or 0), "deposit_amount": float(lead.deposit_amount or 0),
+        "quote_status": lead.quote_status, "quote_items": lead.quote_items or [],
+        "booking_sync_status": lead.booking_sync_status,
+        "booking_record_url": booking_record_url,
         "created_at": lead.created_at.isoformat(), "updated_at": lead.updated_at.isoformat(),
         "proposal": proposal_json(lead.proposal) if lead.proposal else None,
     }
@@ -132,7 +138,8 @@ def health():
             "booking_connection_configured": bool(settings.booking_base_url),
             "booking_forwarding_enabled": settings.booking_enquiry_forwarding,
             "smtp_configured": bool(settings.smtp_host and settings.smtp_username and settings.smtp_password),
-            "automation_send_enabled": settings.automation_send_enabled,
+            "automation_send_enabled": False,
+            "client_communications_owner": "booking_system",
             "followup_approval_required": settings.followup_approval_required}
 
 
@@ -208,7 +215,6 @@ def create_lead(payload: PublicEnquiryIn, request: Request, db: Session, should_
                 availability=available)
     db.add(lead)
     db.flush()
-    create_default_proposal(db, lead)
     label = "Manual enquiry added" if origin == "manual" else "Website enquiry received"
     db.add(Activity(lead_id=lead.id, kind="enquiry_received", label=label,
                     details={"source": lead.referral_source or "Not specified", "availability": available}))
@@ -288,6 +294,9 @@ def booking_enquiry_webhook(payload: BookingWebhookIn, x_integration_key: str | 
         lead.message = payload.message or lead.message
         lead.availability = availability
         lead.estimated_value = payload.estimated_value
+        lead.deposit_amount = payload.deposit_amount
+        lead.quote_status = payload.quote_status
+        lead.quote_items = payload.quote_items
         lead.booking_sync_status = "source"
         lead.booking_sync_error = None
         lead.stage = merged_booking_stage(previous_stage, new_stage)
@@ -304,10 +313,10 @@ def booking_enquiry_webhook(payload: BookingWebhookIn, x_integration_key: str | 
                     package_interest=payload.package_interest, referral_source=payload.referral_source,
                     landing_page=payload.landing_page, campaign=payload.campaign, message=payload.message,
                     availability=availability, booking_sync_status="source", stage=new_stage,
-                    estimated_value=payload.estimated_value)
+                    estimated_value=payload.estimated_value, deposit_amount=payload.deposit_amount,
+                    quote_status=payload.quote_status, quote_items=payload.quote_items)
         db.add(lead)
         db.flush()
-        create_default_proposal(db, lead)
         db.add(Activity(lead_id=lead.id, kind="enquiry_received", label="Booking-system enquiry received",
                         details={"source": lead.referral_source or "Not specified", "availability": availability}))
     if lead.stage in {"booked", "lost"}:
@@ -319,7 +328,7 @@ def booking_enquiry_webhook(payload: BookingWebhookIn, x_integration_key: str | 
         db.add(BookingEventReceipt(event_id=payload.event_id, booking_id=payload.booking_id))
     db.commit()
     return {"ok": True, "status": "synchronised", "lead_id": lead.id,
-            "proposal_created": not was_existing, "duplicate_ignored": was_existing and not payload.event_id,
+            "proposal_created": False, "duplicate_ignored": was_existing and not payload.event_id,
             "stage": lead.stage}
 
 
@@ -334,13 +343,19 @@ def dashboard(_: Admin = Depends(current_admin), db: Session = Depends(get_db)):
     month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     leads = db.scalars(select(Lead).where(Lead.created_at >= month_start).options(selectinload(Lead.proposal), selectinload(Lead.activities)).order_by(Lead.updated_at.desc())).all()
     booked = [x for x in leads if x.stage == "booked"]
-    opened = [x for x in leads if any(a.kind == "proposal_opened" for a in x.activities)]
-    hot = sorted(leads, key=lambda x: sum(1 for a in x.activities if a.kind in {"proposal_opened", "package_viewed", "film_played", "booking_clicked"}), reverse=True)[:8]
-    return {"metrics": {"new_enquiries": len(leads), "proposal_opened": len(opened), "bookings": len(booked),
+    quoted = [x for x in leads if x.stage in {"qualified", "proposal", "engaged", "booked"}]
+    attention_order = {"engaged": 0, "new": 1, "qualified": 2, "proposal": 3}
+    hot = sorted((x for x in leads if x.stage not in {"booked", "lost"}),
+                 key=lambda x: (attention_order.get(x.stage, 9), -x.updated_at.timestamp()))[:8]
+    new_count = sum(1 for x in leads if x.stage == "new")
+    accepted_count = sum(1 for x in leads if x.stage == "engaged")
+    return {"metrics": {"new_enquiries": len(leads), "quotes_progressing": len(quoted), "bookings": len(booked),
                         "booked_value": float(sum((x.estimated_value or Decimal("0")) for x in booked))},
             "hot_leads": [lead_json(x) for x in hot],
-            "actions": [{"kind": "approval", "count": db.scalar(select(func.count()).select_from(Automation).where(Automation.status == "scheduled", Automation.approval_required.is_(True), Automation.approved_at.is_(None))) or 0,
-                         "label": "Follow-ups waiting for approval"}]}
+            "actions": [
+                {"kind": "new", "count": new_count, "label": "new enquiries waiting for a quote"},
+                {"kind": "accepted", "count": accepted_count, "label": "accepted quotes waiting for confirmation"},
+            ]}
 
 
 @app.get("/api/admin/leads")
@@ -374,45 +389,17 @@ def patch_lead(lead_id: str, payload: LeadPatchIn, _: Admin = Depends(csrf_admin
 
 @app.patch("/api/admin/leads/{lead_id}/proposal")
 def patch_proposal(lead_id: str, payload: ProposalPatchIn, _: Admin = Depends(csrf_admin), db: Session = Depends(get_db)):
-    lead = load_lead(db, lead_id)
-    for key, value in payload.model_dump(exclude_unset=True).items():
-        setattr(lead.proposal, key, value)
-    db.commit()
-    return proposal_json(lead.proposal)
+    raise HTTPException(410, "Quotes are managed in the Booking System")
 
 
 @app.post("/api/admin/leads/{lead_id}/proposal/publish")
 def publish_proposal(lead_id: str, _: Admin = Depends(csrf_admin), db: Session = Depends(get_db)):
-    lead = load_lead(db, lead_id)
-    lead.proposal.published = True
-    lead.stage = "proposal"
-    db.add(Activity(lead_id=lead.id, kind="proposal_published", label="Personal proposal published"))
-    db.commit()
-    return proposal_json(lead.proposal)
+    raise HTTPException(410, "Quotes are published from the Booking System")
 
 
 @app.post("/api/admin/leads/{lead_id}/proposal/send")
 def email_proposal(lead_id: str, _: Admin = Depends(csrf_admin), db: Session = Depends(get_db)):
-    lead = load_lead(db, lead_id)
-    if not lead.proposal.published:
-        raise HTTPException(409, "Publish the proposal before emailing it")
-    if not settings.automation_send_enabled:
-        raise HTTPException(409, "Email sending is disabled for setup testing")
-    if lead.proposal.sent_at:
-        raise HTTPException(409, "This proposal has already been emailed")
-    url = proposal_json(lead.proposal)["url"]
-    subject = f"Your wedding photography information – {lead.primary_first_name} & {lead.partner_first_name}"
-    body = f"Hi {lead.primary_first_name},\n\nThank you again for getting in touch about your wedding at {lead.venue}. I have prepared your personal wedding information here:\n\n{url}\n\nIf you have any questions, simply reply to this email.\n\nMark\nWeddings By Mark\n{settings.business_phone}"
-    try:
-        send_email(lead.email, subject, body)
-    except Exception as exc:
-        raise HTTPException(503, f"The proposal is published but the email could not be sent: {str(exc)}")
-    lead.proposal.sent_at = datetime.now(timezone.utc)
-    lead.proposal.expires_at = lead.proposal.sent_at + timedelta(days=settings.proposal_days_valid)
-    schedule_proposal_followups(db, lead)
-    db.add(Activity(lead_id=lead.id, kind="proposal_sent", label="Personal proposal emailed"))
-    db.commit()
-    return {"ok": True, "sent_to": lead.email}
+    raise HTTPException(410, "Quotes and client emails are managed in the Booking System")
 
 
 @app.patch("/api/admin/automations/{automation_id}")
@@ -457,34 +444,6 @@ def cancel_automation(automation_id: str, _: Admin = Depends(csrf_admin), db: Se
     return automation_json(item)
 
 
-@app.get("/api/admin/settings/package-catalogue")
-def package_catalogue(_: Admin = Depends(current_admin), db: Session = Depends(get_db)):
-    return {"packages": get_package_catalogue(db),
-            "smtp_configured": bool(settings.smtp_host and settings.smtp_username and settings.smtp_password),
-            "sending_enabled": settings.automation_send_enabled,
-            "approval_required": settings.followup_approval_required}
-
-
-@app.put("/api/admin/settings/package-catalogue")
-def update_package_catalogue(payload: PackageCatalogueIn, _: Admin = Depends(csrf_admin), db: Session = Depends(get_db)):
-    packages = [item.model_dump() for item in payload.packages]
-    if len({item["code"] for item in packages}) != len(packages):
-        raise HTTPException(422, "Every package needs a unique code")
-    item = db.get(Setting, "package_catalogue")
-    if item:
-        item.value = {"packages": packages}
-    else:
-        db.add(Setting(key="package_catalogue", value={"packages": packages}))
-    drafts_updated = 0
-    if payload.apply_to_drafts:
-        drafts = db.scalars(select(Proposal).where(Proposal.published.is_(False))).all()
-        for proposal in drafts:
-            proposal.packages = packages
-            drafts_updated += 1
-    db.commit()
-    return {"packages": packages, "drafts_updated": drafts_updated}
-
-
 @app.get("/p/{slug}/{token}", response_class=HTMLResponse)
 def public_proposal(slug: str, token: str, request: Request, db: Session = Depends(get_db)):
     item = db.scalar(select(Proposal).where(Proposal.slug == slug, Proposal.access_token == token, Proposal.published.is_(True)).options(selectinload(Proposal.lead)))
@@ -512,8 +471,6 @@ def proposal_activity(token: str, payload: ActivityIn, request: Request, db: Ses
     if not duplicate:
         db.add(Activity(lead_id=proposal.lead_id, kind=payload.kind, label=payload.label,
                         details=payload.details, visitor_hash=fingerprint))
-        if payload.kind in {"package_viewed", "film_played", "booking_clicked"} and proposal.lead.stage not in {"booked", "lost"}:
-            proposal.lead.stage = "engaged"
         db.commit()
     return Response(status_code=204)
 

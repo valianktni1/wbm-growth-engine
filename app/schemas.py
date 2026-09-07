@@ -31,7 +31,26 @@ class LeadCreateIn(PublicEnquiryIn):
     forward_to_booking: bool = False
 
 
+class IntelligenceIn(BaseModel):
+    version: int = 1
+    source_created_at: datetime
+    archived: bool = False
+    suppressed: bool = False
+    is_test: bool = False
+    booking_status: str = Field(max_length=30)
+    deposit_paid: bool = False
+    quote_accepted: bool = False
+    quote_sent_at: datetime | None = None
+    last_contact_at: datetime | None = None
+    quote_link_at: datetime | None = None
+    quote_link_count: int = Field(default=0, ge=0)
+    last_incoming_at: datetime | None = None
+    mail_status: Literal['not_configured', 'recent_inbox', 'unavailable'] = 'not_configured'
+    mail_checked_at: datetime | None = None
+
+
 class BookingWebhookIn(BaseModel):
+    intelligence: IntelligenceIn | None = None
     event_id: str | None = Field(default=None, min_length=8, max_length=160)
     booking_id: str = Field(min_length=1, max_length=100)
     primary_first_name: str = Field(min_length=1, max_length=100)
@@ -84,4 +103,3 @@ class AutomationPatchIn(BaseModel):
     subject: str | None = Field(default=None, min_length=1, max_length=300)
     body: str | None = Field(default=None, min_length=1, max_length=10000)
     scheduled_for: datetime | None = None
-

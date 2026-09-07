@@ -1,28 +1,17 @@
-# Weddings By Mark Growth Engine
+# Weddings By Mark Growth Engine V1.2.0
 
-CURRENT RELEASE: V1.1.1. BookingSystem2026 is the single source of truth for packages, add-ons, quotes, contracts, invoices and client emails. Growth Engine is the read-only sales intelligence layer.
+Build: 2026.09.07-today-and-performance-v1.2.0
+Paired with BookingSystem2026 V8.39.
 
-Version 1.0.1 is a standalone, self-hosted enquiry conversion application for TrueNAS SCALE and Dockge.
+Start with Today for attention cards and What works for enquiry-source, venue,
+package and add-on performance. Enquiries opens the synced booking records.
+Booking owns all quotes, packages, add-ons, contracts, invoices and client emails.
+Growth does not send emails or create competing proposals.
 
-The intended source workflow is GitHub Desktop → `valianktni1/wbm-growth-engine` main branch → TrueNAS/Dockge. The repository can be made private after TrueNAS has pulled the required revision.
+Read RELEASE-NOTES-V1.2.0.md for features and mailbox/reporting coverage.
+After pushing both source repositories, update Growth with git pull --ff-only
+and run sudo bash scripts/deploy-v120-paired.sh from its Dockge stack directory.
+The script preserves the existing Compose configuration and credentials, builds
+both images, backs up both databases, verifies versioned health and synchronises.
 
-## What this first release includes
-
-- Secure administrator sign-in and responsive desktop/mobile workspace.
-- Website and manual enquiry capture.
-- Privacy-safe availability checks through the existing booking system.
-- Optional forwarding into the existing booking system without database access.
-- Automatic booking, quote, add-on, value and stage updates from BookingSystem2026.
-- Clear new enquiry, quote sent, quote accepted, booked and lost stages.
-- Suggested next actions without duplicating the Booking System workflow.
-- Read-only display of the package, selected add-ons, discounts, booking fee and total from the real quote.
-- Venue enquiry, booking and revenue summaries.
-- Daily PostgreSQL backups with checksums and retention.
-
-## Important safety defaults
-
-Growth Engine does not send quotes or client emails. Those remain in BookingSystem2026, preventing duplicate messages or two conflicting versions of a quote.
-
-Do not reuse database, session or administrator passwords from another application.
-
-See `DEPLOY-TRUENAS.md` for the deployment steps.
+No new datasets or manually configured credentials are needed.

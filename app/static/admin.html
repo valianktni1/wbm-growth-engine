@@ -8,7 +8,9 @@
   <style>[hidden]{display:none!important}</style>
   <link rel="stylesheet" href="/static/app.css?v=1.1.1">
   <link rel="stylesheet" href="/static/growth.css?v=1.1.1">
-  <script src="/static/growth.js?v=1.1.1" defer></script>
+  <script src="/static/growth.js?v=1.2.0" defer></script>
+  <script src="/static/intelligence.js?v=1.2.0" defer></script>
+  <link rel="stylesheet" href="/static/intelligence.css?v=1.2.0">
 </head>
 <body>
   <div id="app" hidden>
@@ -16,9 +18,9 @@
       <button class="mobile-menu" id="mobile-menu" type="button" aria-label="Open menu">☰</button>
       <a class="brand" href="#dashboard"><span>Weddings By Mark</span><strong>Growth Engine</strong></a>
       <nav id="navigation" aria-label="Main navigation">
-        <button data-view="dashboard" class="active" type="button">Dashboard</button>
+        <button data-view="today" type="button">Today</button>
+        <button data-view="performance" type="button">What works</button>
         <button data-view="enquiries" type="button">Enquiries</button>
-        <button data-view="venues" type="button">Venues</button>
       </nav>
       <button class="profile" id="logout" type="button"><span id="admin-name">Mark</span><i>MP</i></button>
     </header>

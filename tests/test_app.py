@@ -86,6 +86,29 @@ def test_health_is_safe():
         assert "password" not in response.text.lower()
 
 
+def test_intelligence_sync_reporting_and_snooze(monkeypatch):
+    monkeypatch.setattr(main, 'check_booking_availability', lambda _: 'Available')
+    from datetime import datetime, timezone
+    headers = {'X-Integration-Key': os.environ['BOOKING_WEBHOOK_KEY']}
+    payload = {'booking_id':'insight-1','event_id':'insight-event-1', 'primary_first_name':'Kit',
+               'partner_first_name':'Alex','email':'kit@example.com','event_date':'2030-06-01','venue':'Barn',
+               'intelligence':{'source_created_at':'2026-09-01T10:00:00Z','booking_status':'enquiry'}}
+    with TestClient(main.app) as client:
+        assert client.get('/api/admin/intelligence/today').status_code == 401
+        csrf = login(client)
+        created = client.post('/api/integrations/booking/enquiry', headers=headers, json=payload)
+        assert created.status_code == 201
+        lead_id = created.json()['lead_id']
+        assert any(c['lead_id']==lead_id for c in client.get('/api/admin/intelligence/today').json()['cards'])
+        assert client.post(f'/api/admin/intelligence/{lead_id}/snooze', json={'hours':24}).status_code == 403
+        assert client.post(f'/api/admin/intelligence/{lead_id}/snooze', headers={'X-CSRF-Token':csrf}, json={'hours':24}).status_code == 200
+        assert not any(c['lead_id']==lead_id for c in client.get('/api/admin/intelligence/today').json()['cards'])
+        assert client.post('/api/admin/intelligence/reset-snoozes', headers={'X-CSRF-Token':csrf}).status_code == 200
+        assert client.get('/api/admin/intelligence/performance?start=2026-10-01&end=2026-09-01').status_code == 422
+        report=client.get('/api/admin/intelligence/performance?start=2026-09-01&end=2026-09-02').json()
+        assert report['enquiries']==1
+
+
 def test_booking_webhook_is_authenticated_and_idempotent(monkeypatch):
     monkeypatch.setattr(main, "check_booking_availability", lambda _: "Available")
     payload = {

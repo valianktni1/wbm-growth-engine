@@ -13,8 +13,9 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session, selectinload
 
 from .config import get_settings
+from .intelligence import router as intelligence_router
 from .db import Base, SessionLocal, engine, get_db
-from .models import Activity, Admin, Automation, BookingEventReceipt, Lead, Proposal
+from .models import Activity, Admin, Automation, BookingEventReceipt, Lead, Proposal, BookingInsight
 from .schemas import ActivityIn, AutomationPatchIn, BookingWebhookIn, LeadCreateIn, LeadPatchIn, LoginIn, ProposalPatchIn, PublicEnquiryIn
 from .security import csrf_admin, current_admin, hash_password, make_session, verify_password
 from .services import check_booking_availability, forward_to_booking, visitor_fingerprint
@@ -64,8 +65,9 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title=settings.app_name, version="1.1.1", docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="1.2.0", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
+app.include_router(intelligence_router)
 
 
 @app.middleware("http")
@@ -299,7 +301,7 @@ def booking_enquiry_webhook(payload: BookingWebhookIn, x_integration_key: str | 
         lead.quote_items = payload.quote_items
         lead.booking_sync_status = "source"
         lead.booking_sync_error = None
-        lead.stage = merged_booking_stage(previous_stage, new_stage)
+        lead.stage = new_stage if payload.intelligence else merged_booking_stage(previous_stage, new_stage)
         if previous_stage != lead.stage:
             db.add(Activity(lead_id=lead.id, kind="booking_status_changed",
                             label=f"Booking system updated: {lead.stage}",
@@ -324,6 +326,13 @@ def booking_enquiry_webhook(payload: BookingWebhookIn, x_integration_key: str | 
                 Automation.lead_id == lead.id, Automation.status == "scheduled")).all():
             automation.status = "cancelled"
             automation.error = f"Cancelled automatically because booking status became {new_stage}"
+    if payload.intelligence:
+        insight = db.get(BookingInsight, lead.id)
+        if not insight:
+            insight = BookingInsight(lead_id=lead.id)
+            db.add(insight)
+        insight.facts = payload.intelligence.model_dump(mode='json')
+        insight.received_at = datetime.now(timezone.utc)
     if payload.event_id:
         db.add(BookingEventReceipt(event_id=payload.event_id, booking_id=payload.booking_id))
     db.commit()

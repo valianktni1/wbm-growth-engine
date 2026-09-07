@@ -75,8 +75,70 @@ def test_complete_enquiry_and_proposal_journey(monkeypatch):
         assert sent.status_code == 200
         detail = client.get(f"/api/admin/leads/{lead['id']}").json()
         assert len(detail['automations']) == 3
+        first, second = detail["automations"][:2]
+        changed = client.patch(
+            f"/api/admin/automations/{first['id']}",
+            headers={"X-CSRF-Token": csrf},
+            json={"subject": "A personally checked follow-up"},
+        )
+        assert changed.status_code == 200
+        assert changed.json()["subject"] == "A personally checked follow-up"
+        approved = client.post(
+            f"/api/admin/automations/{first['id']}/approve",
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert approved.status_code == 200
+        assert approved.json()["approved_at"]
+        revised = client.patch(
+            f"/api/admin/automations/{first['id']}",
+            headers={"X-CSRF-Token": csrf},
+            json={"body": "A revised message that must be approved again."},
+        )
+        assert revised.status_code == 200
+        assert revised.json()["approved_at"] is None
+        cancelled = client.post(
+            f"/api/admin/automations/{second['id']}/cancel",
+            headers={"X-CSRF-Token": csrf},
+        )
+        assert cancelled.status_code == 200
+        assert cancelled.json()["status"] == "cancelled"
         repeat = client.post(f"/api/admin/leads/{lead['id']}/proposal/send", headers={"X-CSRF-Token": csrf})
         assert repeat.status_code == 409
+
+
+def test_package_catalogue_can_update_unpublished_drafts(monkeypatch):
+    monkeypatch.setattr(main, "check_booking_availability", lambda _: "Available")
+    with TestClient(main.app) as client:
+        csrf = login(client)
+        payload = enquiry_payload()
+        payload["email"] = "catalogue@example.com"
+        payload["primary_first_name"] = "Catalog"
+        created = client.post(
+            "/api/admin/leads",
+            headers={"X-CSRF-Token": csrf},
+            json={**payload, "forward_to_booking": False},
+        )
+        assert created.status_code == 201
+        lead_id = created.json()["id"]
+
+        current = client.get("/api/admin/settings/package-catalogue")
+        assert current.status_code == 200
+        assert any(item["code"] == "ultimate" and item["price"] == 1799 for item in current.json()["packages"])
+        assert any(item["code"] == "platinum" and item["price"] == 1350 for item in current.json()["packages"])
+
+        packages = [
+            {"code": "bespoke", "name": "Bespoke Collection", "price": 999,
+             "description": "A test package for an unpublished proposal."}
+        ]
+        saved = client.put(
+            "/api/admin/settings/package-catalogue",
+            headers={"X-CSRF-Token": csrf},
+            json={"packages": packages, "apply_to_drafts": True},
+        )
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["drafts_updated"] >= 1
+        detail = client.get(f"/api/admin/leads/{lead_id}").json()
+        assert detail["proposal"]["packages"] == packages
 
 
 def test_public_enquiry_requires_privacy(monkeypatch):

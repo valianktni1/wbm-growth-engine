@@ -12,18 +12,26 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import get_settings
-from .models import Activity, Automation, Lead, Proposal
+from .models import Activity, Automation, Lead, Proposal, Setting
 
 
 settings = get_settings()
 
 DEFAULT_PACKAGES = [
-    {"code": "silver", "name": "Silver – Full Day Photography", "price": 699, "description": "Eight hours, 600+ photographs, private gallery, guest QR uploads and wedding album."},
-    {"code": "gold", "name": "Gold – Photography & Highlight Film", "price": 899, "description": "Full-day photography plus a 5–7 minute highlight film and drone where permitted."},
-    {"code": "platinum", "name": "Platinum – Complete Photo & Video", "price": 1299, "description": "Photography, highlight film, full ceremony and speeches, with a two-person team."},
+    {"code": "half-day", "name": "Half Day Photography", "price": 475, "description": "Ceremony, family photographs, relaxed couple portraits and candid coverage, with 300+ photographs in a private online gallery."},
+    {"code": "silver", "name": "Silver – Full Day Photography", "price": 699, "description": "Up to eight hours from bridal preparation to the first dance, 600+ photographs, private gallery, guest QR uploads and a wedding album."},
+    {"code": "gold", "name": "Gold – Photography & Highlight Film", "price": 899, "description": "Full-day photography plus a 5–7 minute highlight film and drone coverage where permitted and weather allows."},
+    {"code": "platinum", "name": "Platinum – Complete Photo & Video", "price": 1350, "description": "Full-day photography, highlight film, full ceremony and speeches, drone coverage and a two-person team."},
+    {"code": "ultimate", "name": "Ultimate Wedding Collection", "price": 1799, "description": "Complete photography and video coverage, drone where permitted, Selfie Booth and three 12×12 wedding albums."},
 ]
 
 DEFAULT_TESTIMONIALS = []  # Only verified, owner-supplied reviews may be published.
+
+
+def get_package_catalogue(db: Session) -> list[dict]:
+    item = db.get(Setting, "package_catalogue")
+    packages = (item.value or {}).get("packages") if item else None
+    return packages if isinstance(packages, list) and packages else DEFAULT_PACKAGES
 
 
 def check_booking_availability(event_date) -> str:
@@ -87,7 +95,7 @@ def create_default_proposal(db: Session, lead: Lead) -> Proposal:
         headline=f"Your wedding, {lead.primary_first_name} & {lead.partner_first_name}",
         introduction=f"Thank you for asking me about your wedding at {lead.venue}. Please check the date status below and contact me before making plans.",
         personal_message="I would love to hear a little more about the day you are planning. Everything below can be tailored around the two of you.",
-        packages=DEFAULT_PACKAGES,
+        packages=get_package_catalogue(db),
         testimonials=DEFAULT_TESTIMONIALS,
         media=[],
         expires_at=None,

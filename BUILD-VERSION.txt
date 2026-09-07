@@ -1,8 +1,8 @@
 Weddings By Mark Growth Engine
-Version: 1.0.3
-Build: 2026.09.07-two-way-booking-connector-v1.0.3
+Version: 1.1.0
+Build: 2026.09.07-package-and-followup-controls-v1.1.0
 
-Release type: Connector testing only - keep email sending and automatic sync off initially.
+Release type: Business configuration and approval controls.
 
 This release keeps its own PostgreSQL database and exchanges authenticated,
 idempotent events with BookingSystem2026 V8.37. Neither app reads the other
@@ -10,7 +10,7 @@ app's database directly.
 
 Source workflow: GitHub repository `valianktni1/wbm-growth-engine`, branch `main`.
 
-Initial safety switches:
+Safety switches:
 - Manual-enquiry forwarding to the booking system: off
 - Automatic email sending: off
 - Personal follow-ups: approval required

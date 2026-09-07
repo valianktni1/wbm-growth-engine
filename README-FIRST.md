@@ -1,6 +1,6 @@
 # Weddings By Mark Growth Engine
 
-CURRENT RELEASE: V1.0.2, setup testing only. Read SETUP-STATUS-V1.0.2.md first; it corrects the scope and supersedes earlier deployment/feature claims. Leave sending and forwarding disabled.
+CURRENT RELEASE: V1.1.0. The BookingSystem2026 V8.37 connector is live and this release adds an editable package catalogue and stronger follow-up approval controls. Automatic email sending remains disabled.
 
 Version 1.0.1 is a standalone, self-hosted enquiry conversion application for TrueNAS SCALE and Dockge.
 
@@ -20,6 +20,9 @@ The intended source workflow is GitHub Desktop → `valianktni1/wbm-growth-engin
 - Approval-required follow-up mode by default.
 - Venue enquiry, booking and revenue summaries.
 - Daily PostgreSQL backups with checksums and retention.
+- A Settings screen for maintaining proposal packages without changing code.
+- Safe application of package changes to unpublished drafts only.
+- Follow-up editing, approval and cancellation; editing an approved message removes its approval so it must be checked again.
 
 ## Important safety defaults
 

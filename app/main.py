@@ -15,10 +15,10 @@ from sqlalchemy.orm import Session, selectinload
 
 from .config import get_settings
 from .db import Base, SessionLocal, engine, get_db
-from .models import Activity, Admin, Automation, BookingEventReceipt, Lead, Proposal
-from .schemas import ActivityIn, AutomationPatchIn, BookingWebhookIn, LeadCreateIn, LeadPatchIn, LoginIn, ProposalPatchIn, PublicEnquiryIn
+from .models import Activity, Admin, Automation, BookingEventReceipt, Lead, Proposal, Setting
+from .schemas import ActivityIn, AutomationPatchIn, BookingWebhookIn, LeadCreateIn, LeadPatchIn, LoginIn, PackageCatalogueIn, ProposalPatchIn, PublicEnquiryIn
 from .security import csrf_admin, current_admin, hash_password, make_session, verify_password
-from .services import check_booking_availability, create_default_proposal, forward_to_booking, process_due_automations, schedule_proposal_followups, send_email, visitor_fingerprint
+from .services import check_booking_availability, create_default_proposal, forward_to_booking, get_package_catalogue, process_due_automations, schedule_proposal_followups, send_email, visitor_fingerprint
 
 
 settings = get_settings()
@@ -64,7 +64,7 @@ async def lifespan(_: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title=settings.app_name, version="1.0.3", docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="1.1.0", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -420,8 +420,13 @@ def patch_automation(automation_id: str, payload: AutomationPatchIn, _: Admin = 
     item = db.get(Automation, automation_id)
     if not item:
         raise HTTPException(404, "Follow-up not found")
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    if item.status != "scheduled":
+        raise HTTPException(409, "Only scheduled follow-ups can be edited")
+    changes = payload.model_dump(exclude_unset=True)
+    for key, value in changes.items():
         setattr(item, key, value)
+    if changes and item.approved_at:
+        item.approved_at = None
     db.commit()
     return automation_json(item)
 
@@ -431,9 +436,53 @@ def approve_automation(automation_id: str, _: Admin = Depends(csrf_admin), db: S
     item = db.get(Automation, automation_id)
     if not item:
         raise HTTPException(404, "Follow-up not found")
+    if item.status != "scheduled":
+        raise HTTPException(409, "Only scheduled follow-ups can be approved")
     item.approved_at = datetime.now(timezone.utc)
     db.commit()
     return automation_json(item)
+
+
+@app.post("/api/admin/automations/{automation_id}/cancel")
+def cancel_automation(automation_id: str, _: Admin = Depends(csrf_admin), db: Session = Depends(get_db)):
+    item = db.get(Automation, automation_id)
+    if not item:
+        raise HTTPException(404, "Follow-up not found")
+    if item.status not in {"scheduled", "failed"}:
+        raise HTTPException(409, "This follow-up can no longer be cancelled")
+    item.status = "cancelled"
+    item.approved_at = None
+    db.add(Activity(lead_id=item.lead_id, kind="followup_cancelled", label=f"{item.kind.replace('_', ' ').title()} cancelled"))
+    db.commit()
+    return automation_json(item)
+
+
+@app.get("/api/admin/settings/package-catalogue")
+def package_catalogue(_: Admin = Depends(current_admin), db: Session = Depends(get_db)):
+    return {"packages": get_package_catalogue(db),
+            "smtp_configured": bool(settings.smtp_host and settings.smtp_username and settings.smtp_password),
+            "sending_enabled": settings.automation_send_enabled,
+            "approval_required": settings.followup_approval_required}
+
+
+@app.put("/api/admin/settings/package-catalogue")
+def update_package_catalogue(payload: PackageCatalogueIn, _: Admin = Depends(csrf_admin), db: Session = Depends(get_db)):
+    packages = [item.model_dump() for item in payload.packages]
+    if len({item["code"] for item in packages}) != len(packages):
+        raise HTTPException(422, "Every package needs a unique code")
+    item = db.get(Setting, "package_catalogue")
+    if item:
+        item.value = {"packages": packages}
+    else:
+        db.add(Setting(key="package_catalogue", value={"packages": packages}))
+    drafts_updated = 0
+    if payload.apply_to_drafts:
+        drafts = db.scalars(select(Proposal).where(Proposal.published.is_(False))).all()
+        for proposal in drafts:
+            proposal.packages = packages
+            drafts_updated += 1
+    db.commit()
+    return {"packages": packages, "drafts_updated": drafts_updated}
 
 
 @app.get("/p/{slug}/{token}", response_class=HTMLResponse)

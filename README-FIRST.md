@@ -1,3 +1,7 @@
+# Growth V1.3.0
+
+Use the paired release START-HERE instructions and scripts/deploy-v130-paired.sh. New tab: Fill my dates. See RELEASE-NOTES-V1.3.0.md.
+
 # Weddings By Mark Growth Engine V1.2.0
 
 Build: 2026.09.07-today-and-performance-v1.2.0

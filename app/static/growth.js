@@ -40,6 +40,7 @@ function setView(view) {
   if (view === "enquiries") renderEnquiries();
   if (view === "venues") renderVenues();
   if (view === "today") renderToday().catch(error => toast(error.message));
+  if (view === "gaps") renderGaps().catch(error => toast(error.message));
   if (view === "performance") renderPerformance().catch(error => toast(error.message));
   window.location.hash = view;
   workspace.focus();
@@ -142,7 +143,7 @@ async function start() {
     document.querySelector("#mobile-menu").addEventListener("click", () => document.querySelector("#navigation").classList.toggle("open"));
     document.querySelector("#logout").addEventListener("click", async () => {await api("/api/auth/logout", {method:"POST"}); window.location.replace("/login");});
     const requested = location.hash.slice(1);
-    setView(["dashboard", "enquiries", "venues", "today", "performance"].includes(requested) ? requested : "today");
+    setView(["dashboard", "enquiries", "venues", "today", "performance", "gaps"].includes(requested) ? requested : "today");
   } catch (error) {
     if (!location.pathname.startsWith("/login")) window.location.replace("/login");
   }

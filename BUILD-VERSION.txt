@@ -1,6 +1,6 @@
 Weddings By Mark Growth Engine
 Version: 1.2.0
-Build: 2026.09.07-today-and-performance-v1.2.0
+Build: 2026.09.08-fill-my-dates-v1.3.0
 
 Today attention cards and What works performance reporting.
 Paired with BookingSystem2026 V8.39.

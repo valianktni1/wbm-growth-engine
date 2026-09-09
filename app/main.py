@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, selectinload
 from .config import get_settings
 from .intelligence import router as intelligence_router
 from .gaps import router as gaps_router
+from .planning import router as planning_router
 from .db import Base, SessionLocal, engine, get_db
 from .models import Activity, Admin, Automation, BookingEventReceipt, Lead, Proposal, BookingInsight
 from .schemas import ActivityIn, AutomationPatchIn, BookingWebhookIn, LeadCreateIn, LeadPatchIn, LoginIn, ProposalPatchIn, PublicEnquiryIn
@@ -66,10 +67,11 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title=settings.app_name, version="1.3.0", docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="1.4.1", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 app.include_router(intelligence_router)
 app.include_router(gaps_router)
+app.include_router(planning_router)
 
 
 @app.middleware("http")

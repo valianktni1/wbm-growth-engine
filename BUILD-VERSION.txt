@@ -1,7 +1,7 @@
 Weddings By Mark Growth Engine
-Version: 1.2.0
-Build: 2026.09.08-fill-my-dates-v1.3.0
+Version: 1.4.1
+Build: 2026.09.08-fast-booking-compatible-v1.4.1
 
-Today attention cards and What works performance reporting.
-Paired with BookingSystem2026 V8.39.
+Business planning, 12–24 month availability, venue campaigns, enquiry journey and weekly actions.
+Paired with BookingSystem2026 V8.43.1, based on the corrected V8.42.1 ZIP.
 Client emails and quotes remain in Booking.

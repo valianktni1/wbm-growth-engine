@@ -40,6 +40,9 @@ class IntelligenceIn(BaseModel):
     booking_status: str = Field(max_length=30)
     deposit_paid: bool = False
     quote_accepted: bool = False
+    first_quote_sent_at: datetime | None = None
+    quote_accepted_at: datetime | None = None
+    deposit_paid_date: date | None = None
     quote_sent_at: datetime | None = None
     last_contact_at: datetime | None = None
     quote_link_at: datetime | None = None

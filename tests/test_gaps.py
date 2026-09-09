@@ -94,7 +94,7 @@ def test_unknown_stale_and_incomplete_data_never_become_free_dates(monkeypatch):
     monkeypatch.setattr(gaps,'urlopen',fail)
     with pytest.raises(HTTPException) as error:gaps.booking_window(today,today)
     assert error.value.status_code==503
-    for start,end in [(today-timedelta(days=1),today),(today,today+timedelta(days=184)),(today+timedelta(days=1),today)]:
+    for start,end in [(today-timedelta(days=1),today),(today,today+timedelta(days=732)),(today+timedelta(days=1),today)]:
         with pytest.raises(HTTPException) as error:gaps.booking_window(start,end)
         assert error.value.status_code==422
 

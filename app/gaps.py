@@ -7,12 +7,12 @@ from urllib.parse import urlencode, quote
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from .config import get_settings
 from .db import get_db
-from .models import Campaign, CampaignAttribution, Lead, BookingInsight
+from .models import Campaign, CampaignAttribution, Lead, BookingInsight, Setting
 from .security import current_admin, csrf_admin
 from .intelligence import records, active_record, won, utc
 
@@ -43,8 +43,8 @@ class Availability(BaseModel):
 
 
 def booking_window(start, end):
-    if start < london_today() or end < start or (end-start).days > 183:
-        raise HTTPException(422, 'Choose today or later and no more than six months (184 days).')
+    if start < london_today() or end < start or (end-start).days > 731:
+        raise HTTPException(422, 'Choose today or later and no more than 24 months (732 days).')
     settings = get_settings()
     if not settings.booking_webhook_key:
         raise HTTPException(503, 'The Booking integration key is not configured. Availability is unknown.')
@@ -60,7 +60,7 @@ def booking_window(start, end):
             raise ValueError('Stale availability')
         return data
     except Exception as exc:
-        raise HTTPException(503, 'Live Booking availability could not be checked. Refresh after checking the connection and Booking V8.41 update. No dates have been assumed free.') from exc
+        raise HTTPException(503, 'Live Booking availability could not be checked. Refresh after checking the connection and Booking V8.43 update. No dates have been assumed free.') from exc
 
 
 def eligible(lead, insight):
@@ -91,10 +91,25 @@ def calendar(start: date, end: date, _=Depends(current_admin), db: Session=Depen
     return result
 
 
+class Creative(BaseModel):
+    venue: str = Field(default='',max_length=240)
+    testimonial: str = Field(default='',max_length=1200)
+    credited_to: str = Field(default='',max_length=160)
+    photo_urls: list[HttpUrl] = Field(default_factory=list,max_length=6)
+    link: HttpUrl | None = None
+
+    @model_validator(mode='after')
+    def credit(self):
+        if self.testimonial.strip() and not self.credited_to.strip():
+            raise ValueError('Add the testimonial credit before using this wording.')
+        return self
+
+
 class PlanIn(BaseModel):
     dates: list[date] = Field(min_length=1, max_length=12)
     channel: Literal['facebook','google'] = 'facebook'
     package_id: str | None = None
+    creative: Creative | None = None
 
 
 class CampaignIn(PlanIn):
@@ -115,20 +130,23 @@ def check_plan(payload):
     return dates, package, data.checked_at
 
 
-def promotion(dates, package, channel):
+def promotion(dates, package, channel, creative=None):
     dates_text = ', '.join(d.strftime('%A %d %B %Y') for d in dates)
     pricing = f'\n\n{package.name}: £{package.price:,.2f}.' if package else ''
+    venue_line = f'Planning your wedding at {creative.venue.strip()}?\n\n' if creative and creative.venue.strip() else ''
+    testimonial = f'\n\n“{creative.testimonial.strip()}” — {creative.credited_to.strip()}' if creative and creative.testimonial.strip() else ''
+    link = str(creative.link) if creative and creative.link else get_settings().booking_action_url.rstrip('/')+'/enquiry'
     intro = ('Still looking for your wedding photographer?' if channel=='facebook' else 'Wedding photography availability')
-    return (f'{intro}\n\nI currently have these dates available: {dates_text}.\n\n'
+    return (f'{intro}\n\n{venue_line}I currently have these dates available: {dates_text}.\n\n'
             'If you’d love natural photographs of the laughter, the little moments and the people who make your day yours, I’d love to hear what you’re planning.'
-            f'{pricing}\n\nTell me your wedding date and venue, and I’ll confirm availability and talk you through the options.\n\n'
-            f'Enquire here: {get_settings().booking_action_url.rstrip("/")}/enquiry\n\nMark | Weddings By Mark')
+            f'{pricing}{testimonial}\n\nTell me your wedding date and venue, and I’ll confirm availability and talk you through the options.\n\n'
+            f'Find out more: {link}\n\nMark | Weddings By Mark')
 
 
 @router.post('/draft')
 def draft(payload:PlanIn, _=Depends(csrf_admin)):
     dates, package, checked = check_plan(payload)
-    return {'draft':promotion(dates,package,payload.channel), 'checked_at':checked.isoformat(),
+    return {'draft':promotion(dates,package,payload.channel,payload.creative), 'checked_at':checked.isoformat(),
             'package':package.model_dump(mode='json') if package else {}}
 
 
@@ -143,6 +161,9 @@ def create_campaign(payload:CampaignIn, _=Depends(csrf_admin), db:Session=Depend
         channel=payload.channel, draft=payload.draft.strip(),
         package_snapshot=package.model_dump(mode='json') if package else {})
     db.add(campaign)
+    db.flush()
+    if payload.creative:
+        db.add(Setting(key='campaign-creative:'+campaign.id,value=payload.creative.model_dump(mode='json')))
     db.commit()
     return {'id':campaign.id}
 
@@ -195,13 +216,14 @@ def mark_published(campaign_id:str,_=Depends(csrf_admin),db:Session=Depends(get_
 def campaigns(_=Depends(current_admin),db:Session=Depends(get_db)):
     source={l.id:(l,i) for l,i in records(db) if i and active_record(i.facts)}
     attribution={r.lead_id:r.campaign_id for r in db.scalars(select(CampaignAttribution))}
+    creative={r.key.removeprefix('campaign-creative:'):r.value for r in db.scalars(select(Setting).where(Setting.key.like('campaign-creative:%')))}
     result=[]
     for row in db.scalars(select(Campaign).order_by(Campaign.created_at.desc())):
         leads=[source[k] for k,c in attribution.items() if c==row.id and k in source]
         wins=[l for l,i in leads if won(i.facts)]
         result.append({'id':row.id,'name':row.name,'dates':row.dates,'channel':row.channel,
             'draft':row.draft,'status':row.status,'package':row.package_snapshot,
-            'created_at':utc(row.created_at).isoformat(), 'published_at':utc(row.published_at).isoformat() if row.published_at else None,
+            'creative':creative.get(row.id), 'created_at':utc(row.created_at).isoformat(), 'published_at':utc(row.published_at).isoformat() if row.published_at else None,
             'enquiries':len(leads),'bookings':len(wins),'booked_value':float(sum((l.estimated_value or Decimal(0) for l in wins),Decimal(0))),
             'leads':[{'id':l.id,'name':l.couple_name,'booked':won(i.facts)} for l,i in leads]})
     return {'campaigns':result,'leads':[{'id':l.id,'name':l.couple_name,'date':l.event_date.isoformat(),

@@ -33,7 +33,7 @@ class Settings(BaseModel):
     email_from_name: str = os.getenv("EMAIL_FROM_NAME", "Mark at Weddings By Mark")
     followup_approval_required: bool = os.getenv("FOLLOWUP_APPROVAL_REQUIRED", "true").lower() == "true"
     proposal_days_valid: int = int(os.getenv("PROPOSAL_DAYS_VALID", "7"))
-    build_version: str = "2026.09.08-fill-my-dates-v1.3.0"
+    build_version: str = "2026.09.08-fast-booking-compatible-v1.4.1"
 
 
 @lru_cache

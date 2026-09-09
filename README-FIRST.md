@@ -1,7 +1,7 @@
-# Weddings By Mark Growth Engine V1.4.1
+# Growth Engine V1.5.0 — Website performance
 
-Use the paired START-HERE instructions and scripts/deploy-v141-paired.sh after pushing both repositories. Open Business plan for yearly targets, the enquiry journey, venue campaigns and weekly actions. Fill my dates now defaults to 12 months.
+Deploy this Growth-only update using scripts/deploy-v150-growth.sh. Booking stays on V8.43.1.
 
-Read RELEASE-NOTES-V1.4.0.md for scope and validation. Booking remains authoritative for prices, quotes, invoices, payments and customer emails.
+See WEBSITE-SETUP.md for deployment, the supplied WordPress plugin, and the Google Search Console connection. Real figures start after connection. Form success/date-check hooks require the current website code; automatic Booking attribution is not yet connected.
 
-This pairing uses Booking V8.43.1 from the corrected V8.42.1 Fast Email Workspace base. See RELEASE-NOTES-V1.4.1.md.
+Existing Business plan, 12–24 month planning, campaigns, Today and What works features are retained.

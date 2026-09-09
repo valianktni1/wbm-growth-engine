@@ -1,3 +1,5 @@
+import asyncio
+from contextlib import suppress
 import hmac
 from collections import defaultdict
 from contextlib import asynccontextmanager
@@ -16,6 +18,7 @@ from .config import get_settings
 from .intelligence import router as intelligence_router
 from .gaps import router as gaps_router
 from .planning import router as planning_router
+from .website import router as website_router, website_loop
 from .db import Base, SessionLocal, engine, get_db
 from .models import Activity, Admin, Automation, BookingEventReceipt, Lead, Proposal, BookingInsight
 from .schemas import ActivityIn, AutomationPatchIn, BookingWebhookIn, LeadCreateIn, LeadPatchIn, LoginIn, ProposalPatchIn, PublicEnquiryIn
@@ -64,14 +67,21 @@ def bootstrap() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     bootstrap()
-    yield
+    website_task = asyncio.create_task(website_loop())
+    try:
+        yield
+    finally:
+        website_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await website_task
 
 
-app = FastAPI(title=settings.app_name, version="1.4.1", docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="1.5.0", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 app.include_router(intelligence_router)
 app.include_router(gaps_router)
 app.include_router(planning_router)
+app.include_router(website_router)
 
 
 @app.middleware("http")

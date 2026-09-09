@@ -152,3 +152,21 @@ class CampaignAttribution(Base):
     lead_id: Mapped[str] = mapped_column(ForeignKey('leads.id', ondelete='CASCADE'), primary_key=True)
     campaign_id: Mapped[str] = mapped_column(ForeignKey('campaigns.id', ondelete='CASCADE'), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class WebsiteVisit(Base):
+    __tablename__ = 'website_visits'
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source: Mapped[str] = mapped_column(String(30))
+    campaign: Mapped[str] = mapped_column(String(80), default='')
+    device: Mapped[str] = mapped_column(String(20))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class WebsiteEvent(Base):
+    __tablename__ = 'website_events'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    visit_id: Mapped[str] = mapped_column(ForeignKey('website_visits.id', ondelete='CASCADE'), index=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    path: Mapped[str] = mapped_column(String(200))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

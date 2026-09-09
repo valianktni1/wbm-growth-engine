@@ -10,6 +10,17 @@ class LoginIn(BaseModel):
     password: str = Field(min_length=8, max_length=200)
 
 
+class AccountEmailIn(BaseModel):
+    current_password: str = Field(min_length=8, max_length=200)
+    new_email: EmailStr
+
+
+class PasswordChangeIn(BaseModel):
+    current_password: str = Field(min_length=8, max_length=200)
+    new_password: str = Field(min_length=12, max_length=200)
+    confirm_password: str = Field(min_length=12, max_length=200)
+
+
 class PublicEnquiryIn(BaseModel):
     primary_first_name: str = Field(min_length=1, max_length=100)
     partner_first_name: str = Field(min_length=1, max_length=100)

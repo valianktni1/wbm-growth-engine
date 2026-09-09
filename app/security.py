@@ -35,7 +35,8 @@ def verify_password(password: str, encoded: str) -> bool:
 
 def make_session(admin: Admin) -> tuple[str, str]:
     csrf = secrets.token_urlsafe(24)
-    token = serializer.dumps({"admin_id": admin.id, "email": admin.email, "csrf": csrf})
+    token = serializer.dumps({"admin_id": admin.id, "email": admin.email, "csrf": csrf,
+                              "session_version": admin.session_version})
     return token, csrf
 
 
@@ -50,6 +51,10 @@ def current_admin(request: Request, db: Session = Depends(get_db)) -> Admin:
     admin = db.get(Admin, data.get("admin_id"))
     if not admin:
         raise HTTPException(401, "Please sign in")
+    # Older sessions are version 1. Changing login details increments this value
+    # and safely closes every other signed-in session.
+    if data.get("session_version", 1) != admin.session_version:
+        raise HTTPException(401, "Your session has expired")
     request.state.session_data = data
     return admin
 
@@ -59,4 +64,3 @@ def csrf_admin(request: Request, x_csrf_token: str | None = Header(default=None)
     if not expected or not x_csrf_token or not hmac.compare_digest(expected, x_csrf_token):
         raise HTTPException(403, "Security token missing or invalid")
     return admin
-

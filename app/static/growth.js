@@ -44,6 +44,7 @@ function setView(view) {
   if (view === "planning") renderPlanning().catch(error => toast(error.message));
   if (view === "gaps") renderGaps().catch(error => toast(error.message));
   if (view === "performance") renderPerformance().catch(error => toast(error.message));
+  if (view === "admin") renderAdmin().catch(error => toast(error.message));
   window.location.hash = view;
   workspace.focus();
 }
@@ -143,9 +144,9 @@ async function start() {
     app.hidden = false;
     document.querySelectorAll("nav button").forEach(button => button.addEventListener("click", () => setView(button.dataset.view)));
     document.querySelector("#mobile-menu").addEventListener("click", () => document.querySelector("#navigation").classList.toggle("open"));
-    document.querySelector("#logout").addEventListener("click", async () => {await api("/api/auth/logout", {method:"POST"}); window.location.replace("/login");});
+    document.querySelector("#profile").addEventListener("click", () => setView("admin"));
     const requested = location.hash.slice(1);
-    setView(["dashboard", "enquiries", "venues", "today", "performance", "gaps", "planning", "website"].includes(requested) ? requested : "today");
+    setView(["dashboard", "enquiries", "venues", "today", "performance", "gaps", "planning", "website", "admin"].includes(requested) ? requested : "today");
   } catch (error) {
     if (!location.pathname.startsWith("/login")) window.location.replace("/login");
   }

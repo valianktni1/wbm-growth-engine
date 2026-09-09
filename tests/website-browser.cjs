@@ -37,6 +37,7 @@ async function uiTest(){
   const source=fs.readFileSync(path.join(root,'app/static/growth.js'),'utf8').replace("window.addEventListener('DOMContentLoaded', start, {once: true});",'');
   vm.runInContext(source,ctx);
   vm.runInContext(fs.readFileSync(path.join(root,'app/static/website.js'),'utf8'),ctx);
+  vm.runInContext(fs.readFileSync(path.join(root,'app/static/account.js'),'utf8'),ctx);
   const report={start:'2026-08-01',end:'2026-08-28',days:28,enabled:false,last_event:null,goals_ready:false,comparison_ready:false,current:{visits:0,views:0,starts:0,enquiries:0,started_and_completed:0,date_checks:0,sources:[],pages:[],campaigns:[]},previous:{visits:0},tips:['Not connected yet.'],google:null,google_status:{},google_connected:false,booking_attribution:'Not connected.'};
   dom.window.fixture=report;
   vm.runInContext("api=async(url)=>url==='/api/auth/me'?{csrf_token:'test',email:'mark@example.com'}:window.fixture; state.view='website';",ctx);
@@ -49,10 +50,17 @@ async function uiTest(){
   await vm.runInContext('renderWebsiteSetup()',ctx);
   assert(dom.window.document.querySelector('#web-settings'));
   assert(dom.window.document.querySelector('#web-google-connect'));
+  dom.window.fixture={email:'mark@example.com',created_at:'2026-09-09T09:00:00Z',session_hours:12,build:'test-admin-build',connections:{booking:true,website:true,google:true},safety:{automatic_email:false,followup_approval:true,client_communications_owner:'Booking System'}};
+  await vm.runInContext('renderAdmin()',ctx);
+  assert(dom.window.document.querySelector('#password-form'));
+  assert(dom.window.document.querySelector('#email-form'));
+  assert(dom.window.document.querySelector('#admin-logout'));
+  assert(dom.window.document.querySelector('#workspace').textContent.includes('Google Search'));
+  assert(dom.window.document.querySelector('#workspace').textContent.includes('test-admin-build'));
   dom.window.close();
 }
 (async()=>{await trackerTest();await trackerTest(true);await uiTest();
  const Parser=require(path.join(process.env.WEB_TEST_MODULES,'php-parser'));
  new Parser({parser:{phpVersion:'7.4',suppressErrors:false}}).parseCode(fs.readFileSync(path.join(root,'wordpress/wbm-website-insights/wbm-website-insights.php'),'utf8'));
- console.log('PASS: consent/withdrawal, same-visit events, no submit-click conversion, GPC, dashboard/setup DOM, PHP syntax.');
+ console.log('PASS: consent/withdrawal, same-visit events, no submit-click conversion, GPC, dashboard/setup/admin DOM, PHP syntax.');
 })().catch(e=>{console.error(e);process.exitCode=1});

@@ -19,6 +19,7 @@ from .intelligence import router as intelligence_router
 from .gaps import router as gaps_router
 from .planning import router as planning_router
 from .website import router as website_router, website_loop
+from .account import router as account_router
 from .db import Base, SessionLocal, engine, get_db
 from .models import Activity, Admin, Automation, BookingEventReceipt, Lead, Proposal, BookingInsight
 from .schemas import ActivityIn, AutomationPatchIn, BookingWebhookIn, LeadCreateIn, LeadPatchIn, LoginIn, ProposalPatchIn, PublicEnquiryIn
@@ -48,12 +49,15 @@ def bootstrap() -> None:
     settings.backup_root.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(engine)
     columns = {column["name"] for column in inspect(engine).get_columns("leads")}
+    admin_columns = {column["name"] for column in inspect(engine).get_columns("admins")}
     additions = {
         "deposit_amount": "NUMERIC(10, 2)",
         "quote_status": "VARCHAR(30)",
         "quote_items": "JSON",
     }
     with engine.begin() as connection:
+        if "session_version" not in admin_columns:
+            connection.execute(text("ALTER TABLE admins ADD COLUMN session_version INTEGER NOT NULL DEFAULT 1"))
         for name, sql_type in additions.items():
             if name not in columns:
                 connection.execute(text(f"ALTER TABLE leads ADD COLUMN {name} {sql_type}"))
@@ -76,12 +80,13 @@ async def lifespan(_: FastAPI):
             await website_task
 
 
-app = FastAPI(title=settings.app_name, version="1.5.0", docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="1.5.1", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 app.include_router(intelligence_router)
 app.include_router(gaps_router)
 app.include_router(planning_router)
 app.include_router(website_router)
+app.include_router(account_router)
 
 
 @app.middleware("http")

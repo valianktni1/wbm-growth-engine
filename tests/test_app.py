@@ -17,6 +17,8 @@ os.environ.update({
 
 from fastapi.testclient import TestClient
 from app import main
+from app.models import Admin
+from app.security import hash_password
 
 
 def setup_module():
@@ -84,6 +86,66 @@ def test_health_is_safe():
         data = response.json()
         assert data["status"] == "ok"
         assert "password" not in response.text.lower()
+
+
+def test_admin_can_change_growth_login_and_close_other_sessions():
+    old_email = "account-test@example.com"
+    new_email = "changed-account@example.com"
+    old_password = "OriginalAccountPassword123"
+    new_password = "ReplacementAccountPassword456"
+    with TestClient(main.app) as first, TestClient(main.app) as second:
+        with main.SessionLocal() as db:
+            db.query(Admin).filter(Admin.email.in_([old_email, new_email])).delete(synchronize_session=False)
+            db.add(Admin(email=old_email, password_hash=hash_password(old_password)))
+            db.commit()
+
+        def sign_in(client, email=old_email, password=old_password):
+            result = client.post("/api/auth/login", json={"email": email, "password": password})
+            assert result.status_code == 200, result.text
+            return result.json()["csrf_token"]
+
+        csrf_first = sign_in(first)
+        sign_in(second)
+        account = first.get("/api/admin/account")
+        assert account.status_code == 200
+        assert account.json()["email"] == old_email
+        assert "password" not in account.text.lower()
+        assert first.put("/api/admin/account/password", json={
+            "current_password": old_password, "new_password": new_password,
+            "confirm_password": new_password,
+        }).status_code == 403
+        wrong = first.put("/api/admin/account/password", headers={"X-CSRF-Token": csrf_first}, json={
+            "current_password": "IncorrectPassword999", "new_password": new_password,
+            "confirm_password": new_password,
+        })
+        assert wrong.status_code == 400
+        mismatch = first.put("/api/admin/account/password", headers={"X-CSRF-Token": csrf_first}, json={
+            "current_password": old_password, "new_password": new_password,
+            "confirm_password": "DifferentAccountPassword789",
+        })
+        assert mismatch.status_code == 422
+        changed = first.put("/api/admin/account/password", headers={"X-CSRF-Token": csrf_first}, json={
+            "current_password": old_password, "new_password": new_password,
+            "confirm_password": new_password,
+        })
+        assert changed.status_code == 200, changed.text
+        csrf_first = changed.json()["csrf_token"]
+        assert second.get("/api/admin/account").status_code == 401
+        assert first.get("/api/admin/account").status_code == 200
+        assert first.post("/api/auth/login", json={"email": old_email, "password": old_password}).status_code == 401
+
+        changed_email = first.put("/api/admin/account/email", headers={"X-CSRF-Token": csrf_first}, json={
+            "current_password": new_password, "new_email": new_email,
+        })
+        assert changed_email.status_code == 200, changed_email.text
+        assert changed_email.json()["email"] == new_email
+        assert first.get("/api/admin/account").json()["email"] == new_email
+        assert first.post("/api/auth/login", json={"email": old_email, "password": new_password}).status_code == 401
+        assert first.post("/api/auth/login", json={"email": new_email, "password": new_password}).status_code == 200
+
+        with main.SessionLocal() as db:
+            db.query(Admin).filter(Admin.email.in_([old_email, new_email])).delete(synchronize_session=False)
+            db.commit()
 
 
 def test_intelligence_sync_reporting_and_snooze(monkeypatch):

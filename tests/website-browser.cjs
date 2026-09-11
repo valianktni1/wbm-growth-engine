@@ -8,17 +8,23 @@ const root=path.join(__dirname,'..');
 const tracker=fs.readFileSync(path.join(root,'wordpress/wbm-website-insights/tracker.js'),'utf8');
 const settle=()=>new Promise(resolve=>setTimeout(resolve,20));
 async function trackerTest(block=false){
-  const dom=new JSDOM('<body><form id="enquiry"><input name="email"></form></body>',{url:'https://perfectweddingsbymark.uk/?utm_source=facebook&private=not-to-collect',runScripts:'outside-only'});
-  const w=dom.window,calls=[];
+  const dom=new JSDOM('<body><iframe id="wbm-enquiry-form" src="https://booking.weddingsbymark.uk/enquiry"></iframe><form id="enquiry"><input name="email"></form></body>',{url:'https://perfectweddingsbymark.uk/?utm_source=facebook&private=not-to-collect',runScripts:'outside-only'});
+  const w=dom.window,calls=[],messages=[];
+  w.document.querySelector('iframe').contentWindow.postMessage=(data,target)=>messages.push({data,target});
   w.wbmInsightsConfig={endpoint:'https://growth.weddingsbymark.uk',token:'public-test-code',ownPrompt:false,formSelector:'#enquiry'};
   Object.defineProperty(w.navigator,'globalPrivacyControl',{value:block});
-  w.fetch=async(url,options)=>{calls.push({url,options});return {ok:true,json:async()=>({pages:['/'],campaigns:[],goals_ready:true})}};
+  w.fetch=async(url,options)=>{calls.push({url,options});return {ok:true,json:async()=>({pages:['/'],measure_all_public:true,campaigns:[],goals_ready:true})}};
   w.eval(tracker);await settle();assert.equal(calls.length,0,'No tracking request before consent');
   w.wbmWebsiteEvent('enquiry_start');assert.equal(calls.length,0);
   await w.wbmAnalyticsConsent(true);await settle();
   if(block){assert.equal(calls.length,0);assert.equal(w.sessionStorage.length,0);dom.window.close();return;}
   assert.equal(calls.length,2);let event=JSON.parse(calls[1].options.body);
   assert.equal(event.source,'Facebook');assert.equal(event.path,'/');assert(!calls[1].options.body.includes('private'));
+  const shared=messages.find(m=>m.data.type==='wbm-growth-attribution');
+  assert(shared);assert.equal(shared.target,'https://booking.weddingsbymark.uk');
+  assert.deepEqual(Object.keys(shared.data.attribution).sort(),['campaign','landing_path','source','visit_id']);
+  assert.equal(shared.data.attribution.landing_path,'/');
+  assert(!JSON.stringify(shared.data).includes('email'));
   w.document.querySelector('input').dispatchEvent(new w.FocusEvent('focusin',{bubbles:true}));
   w.document.querySelector('input').dispatchEvent(new w.FocusEvent('focusin',{bubbles:true}));
   assert.equal(calls.filter(c=>c.options?.body&&JSON.parse(c.options.body).kind==='enquiry_start').length,1);
@@ -27,6 +33,7 @@ async function trackerTest(block=false){
   w.wbmWebsiteEvent('enquiry_success');assert.equal(calls.length,4);
   assert.equal(JSON.parse(calls[3].options.body).visit_id,event.visit_id);
   await w.wbmAnalyticsConsent(false);w.wbmWebsiteEvent('enquiry_success');await settle();assert.equal(calls.length,4);assert.equal(w.sessionStorage.length,0);
+  assert.equal(messages.at(-1).data.type,'wbm-growth-attribution-clear');
   dom.window.close();
 }
 async function uiTest(){

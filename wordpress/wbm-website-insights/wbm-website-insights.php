@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WBM Website Insights
  * Description: Consent-controlled public-page measurements for your self-hosted WBM Growth Engine.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Author: Weddings By Mark
@@ -10,6 +10,10 @@
 if (!defined('ABSPATH')) { exit; }
 add_action('admin_menu', function () {
     add_options_page('WBM Website Insights', 'WBM Website Insights', 'manage_options', 'wbm-website-insights', 'wbmwi_settings_page');
+});
+add_filter('plugin_action_links_' . plugin_basename(__FILE__), function ($links) {
+    array_unshift($links, '<a href="' . esc_url(admin_url('options-general.php?page=wbm-website-insights')) . '">Settings</a>');
+    return $links;
 });
 add_action('admin_init', function () {
     register_setting('wbmwi', 'wbmwi_options', array('sanitize_callback' => 'wbmwi_sanitize', 'type' => 'array'));
@@ -43,7 +47,7 @@ function wbmwi_settings_page() {
 add_action('wp_enqueue_scripts', function () {
     $o = get_option('wbmwi_options', array());
     if (empty($o['enabled']) || empty($o['endpoint']) || empty($o['token']) || is_user_logged_in() || is_preview() || is_feed() || is_404() || post_password_required()) { return; }
-    wp_enqueue_script('wbm-website-insights', plugin_dir_url(__FILE__) . 'tracker.js', array(), '1.0.0', true);
-    wp_enqueue_style('wbm-website-insights', plugin_dir_url(__FILE__) . 'tracker.css', array(), '1.0.0');
+    wp_enqueue_script('wbm-website-insights', plugin_dir_url(__FILE__) . 'tracker.js', array(), '1.1.0', true);
+    wp_enqueue_style('wbm-website-insights', plugin_dir_url(__FILE__) . 'tracker.css', array(), '1.1.0');
     wp_add_inline_script('wbm-website-insights', 'window.wbmInsightsConfig = ' . wp_json_encode(array('endpoint' => $o['endpoint'], 'token' => $o['token'], 'ownPrompt' => !empty($o['own_prompt']), 'formSelector' => $o['form_selector'] ?? '')) . ';', 'before');
 });

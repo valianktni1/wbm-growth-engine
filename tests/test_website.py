@@ -1,13 +1,14 @@
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 import json
+import os
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select, delete
 from test_app import main, login
 from app import website
 from app.db import SessionLocal
-from app.models import WebsiteEvent, WebsiteVisit, Setting
+from app.models import Lead, WebsiteEvent, WebsiteVisit, Setting
 
 
 @pytest.fixture
@@ -41,6 +42,7 @@ def test_auth_origin_size_and_field_limits(client):
     assert client.put('/api/admin/website/setup',json={'enabled':False,'pages':{'/':'Home'}}).status_code==403
     assert client.post('/api/website/events',json=event(token)).status_code==403
     assert post(client,event(token,path='/private-client/')).status_code==422
+    assert post(client,event(token,path='/real-weddings/hazel-gap/')).status_code==204
     assert post(client,event(token,email='couple@example.com')).status_code==422
     assert post(client,event('wrong')).status_code==403
     assert client.post('/api/website/events',content='x'*2049,headers={'Origin':'https://perfectweddingsbymark.uk'}).status_code==413
@@ -66,7 +68,8 @@ def test_visit_dedup_first_source_and_same_visit_funnel(client):
     d=client.get('/api/admin/website/report').json()['current']
     assert d['visits']==2 and d['views']==1
     assert d['starts']==1 and d['enquiries']==2 and d['started_and_completed']==1
-    assert d['sources']==[{'name':'Facebook','visits':2,'enquiries':2}]
+    assert d['sources']==[{'name':'Facebook','visits':2,'enquiries':2,
+                           'linked_enquiries':0,'quote_accepted':0,'bookings':0,'booked_value':0.0}]
     with SessionLocal() as db:
         assert all(v.id!=first['visit_id'] for v in db.scalars(select(WebsiteVisit)))
 
@@ -76,7 +79,7 @@ def test_unconnected_is_not_zero_conversion_and_campaign_persists(client):
     assert post(client,event(token,kind='enquiry_success')).status_code==409
     d=client.get('/api/admin/website/report').json()
     assert not d['goals_ready'] and not d['comparison_ready'] and d['google'] is None
-    assert d['booking_attribution'].startswith('Not connected')
+    assert d['booking_attribution']['connected'] is True
     r=client.post('/api/admin/website/campaign-link',headers=headers,json={'name':'Hazel Gap post','source':'facebook','path':'/packages/'})
     assert r.status_code==200
     from urllib.parse import urlsplit,parse_qs
@@ -84,6 +87,70 @@ def test_unconnected_is_not_zero_conversion_and_campaign_persists(client):
     assert slug in client.get('/api/admin/website/setup').json()['website']['campaigns']
     assert post(client,event(token,campaign=slug)).status_code==204
     assert post(client,event(token,campaign='unregistered-name')).status_code==422
+
+
+def test_verified_visit_links_to_booking_and_reports_real_value(client, monkeypatch):
+    monkeypatch.setattr(main, 'check_booking_availability', lambda _: 'Available')
+    _, token = configure(client)
+    visit_id = str(uuid4())
+    page = event(token, visit_id=visit_id, path='/real-weddings/hazel-gap/')
+    assert post(client, page).status_code == 204
+    assert post(client, event(token, visit_id=visit_id, path='/contact/', kind='enquiry_success')).status_code == 204
+    yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+    with SessionLocal() as db:
+        visit = db.scalar(select(WebsiteVisit).where(WebsiteVisit.source == 'Facebook'))
+        visit.started_at = yesterday
+        for row in db.scalars(select(WebsiteEvent).where(WebsiteEvent.visit_id == visit.id)):
+            row.occurred_at = yesterday
+        db.commit()
+        hashed_visit_id = visit.id
+
+    booking_id = 'attribution-' + str(uuid4())
+    base = {
+        'booking_id': booking_id, 'event_id': booking_id + '-new',
+        'primary_first_name': 'Website', 'partner_first_name': 'Couple',
+        'email': f'{booking_id}@example.com', 'event_date': '2028-06-12',
+        'venue': 'Hazel Gap Barn', 'booking_status': 'enquiry',
+        'website_attribution': {'visit_id': visit_id, 'source': 'Facebook',
+                                'campaign': '', 'landing_path': '/real-weddings/hazel-gap/'},
+    }
+    headers = {'X-Integration-Key': os.environ['BOOKING_WEBHOOK_KEY']}
+    created = client.post('/api/integrations/booking/enquiry', headers=headers, json=base)
+    assert created.status_code == 201, created.text
+    with SessionLocal() as db:
+        lead = db.scalar(select(Lead).where(Lead.external_booking_id == booking_id))
+        assert lead.website_visit_id == hashed_visit_id and lead.is_test is False
+
+    booked = client.post('/api/integrations/booking/enquiry', headers=headers, json={
+        **base, 'event_id': booking_id + '-booked', 'booking_status': 'confirmed',
+        'estimated_value': 1299,
+    })
+    assert booked.status_code == 201 and booked.json()['stage'] == 'booked'
+
+    invalid_id = 'invalid-attribution-' + str(uuid4())
+    invalid = client.post('/api/integrations/booking/enquiry', headers=headers, json={
+        **base, 'booking_id': invalid_id, 'event_id': invalid_id + '-new',
+        'email': f'{invalid_id}@example.com',
+        'website_attribution': {**base['website_attribution'], 'source': 'Google'},
+    })
+    assert invalid.status_code == 201
+    test_id = 'test-attribution-' + str(uuid4())
+    test_row = client.post('/api/integrations/booking/enquiry', headers=headers, json={
+        **base, 'booking_id': test_id, 'event_id': test_id + '-new',
+        'email': f'{test_id}@example.com', 'is_test': True,
+    })
+    assert test_row.status_code == 201
+    with SessionLocal() as db:
+        assert db.scalar(select(Lead).where(Lead.external_booking_id == invalid_id)).website_visit_id is None
+        assert db.scalar(select(Lead).where(Lead.external_booking_id == test_id)).website_visit_id is None
+
+    current = client.get('/api/admin/website/report').json()['current']
+    assert current['linked_enquiries'] == 1
+    assert current['bookings'] == 1
+    assert current['booked_value'] == 1299.0
+    assert current['sources'][0]['bookings'] == 1
+    page_row = next(row for row in current['pages'] if row['path'] == '/real-weddings/hazel-gap/')
+    assert page_row['linked_enquiries'] == 1 and page_row['booked_value'] == 1299.0
 
 
 def test_cache_only_dashboard_and_failure_retains_report(client,monkeypatch):

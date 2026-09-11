@@ -2,11 +2,14 @@
   'use strict';
   const config=window.wbmInsightsConfig;
   if(!config||!['perfectweddingsbymark.uk','www.perfectweddingsbymark.uk'].includes(location.hostname)||location.protocol!=='https:')return;
+  const bookingOrigin='https://booking.weddingsbymark.uk';
+  const privateParts=new Set(['wp-admin','wp-json','bookings','p','login','client','admin']);
   let consenting=false, remote=null, generation=0, controller=null, started=false, pageSent=false;
   const blocked=()=>navigator.globalPrivacyControl===true||navigator.doNotTrack==='1';
   const read=(store,key)=>{try{return store.getItem(key)}catch{return null}};
   const write=(store,key,value)=>{try{store.setItem(key,value)}catch{}};
   const clear=()=>{try{sessionStorage.removeItem('wbm-visit')}catch{}};
+  const safePublicPath=path=>/^\/[a-zA-Z0-9/_-]{0,199}$/.test(path)&&!path.toLowerCase().split('/').some(part=>privateParts.has(part)||part.startsWith('private'));
   function source(){
     const tag=new URL(location.href).searchParams.get('utm_source')?.toLowerCase();
     if(tag)return ({facebook:'Facebook',instagram:'Instagram',google:'Google',bing:'Bing'})[tag]||'Other website';
@@ -23,12 +26,28 @@
     let v;try{v=JSON.parse(read(sessionStorage,'wbm-visit'))}catch{}
     if(!v||typeof v.id!=='string'||!Number.isFinite(v.last)||Date.now()-v.last>1800000){
       const campaign=new URL(location.href).searchParams.get('utm_campaign')||'';
-      v={id:crypto.randomUUID(),source:source(),campaign:remote.campaigns.includes(campaign)?campaign:'',last:Date.now()};
+      v={id:crypto.randomUUID(),source:source(),campaign:remote.campaigns.includes(campaign)?campaign:'',landing_path:location.pathname,last:Date.now()};
     }
+    if(!safePublicPath(v.landing_path||''))v.landing_path=location.pathname;
     v.last=Date.now();write(sessionStorage,'wbm-visit',JSON.stringify(v));return v;
   }
+  function measuredPage(){return !!remote&&safePublicPath(location.pathname)&&(remote.measure_all_public===true||remote.pages.includes(location.pathname));}
+  function enquiryFrame(){
+    const frame=document.getElementById('wbm-enquiry-form');
+    if(!frame)return null;
+    try{return new URL(frame.src,location.href).origin===bookingOrigin?frame:null}catch{return null}
+  }
+  function shareAttribution(clearOnly=false){
+    const frame=enquiryFrame();if(!frame?.contentWindow)return;
+    if(clearOnly||!consenting||blocked()||!remote){
+      frame.contentWindow.postMessage({type:'wbm-growth-attribution-clear'},bookingOrigin);return;
+    }
+    if(!measuredPage())return;
+    const v=visit();
+    frame.contentWindow.postMessage({type:'wbm-growth-attribution',attribution:{visit_id:v.id,source:v.source,campaign:v.campaign,landing_path:v.landing_path}},bookingOrigin);
+  }
   function track(kind){
-    if(!consenting||blocked()||!remote||!remote.pages.includes(location.pathname))return;
+    if(!consenting||blocked()||!measuredPage())return;
     if(!['page_view','enquiry_start','enquiry_success','date_check'].includes(kind))return;
     if(kind!=='page_view'&&!remote.goals_ready)return;
     try{
@@ -43,7 +62,7 @@
     controller?.abort();controller=new AbortController();
     if(config.ownPrompt)write(localStorage,'wbm-analytics-choice',consenting?'allow':'deny');
     document.querySelector('#wbm-insights-prompt')?.remove();
-    if(!consenting){clear();return}
+    if(!consenting){shareAttribution(true);clear();return}
     try{
       const res=await fetch(config.endpoint+'/api/website/config?token='+encodeURIComponent(config.token),{mode:'cors',credentials:'omit',referrerPolicy:'no-referrer',signal:controller.signal});
       if(!res.ok)return;
@@ -51,6 +70,7 @@
       if(current!==generation||!consenting||!Array.isArray(data.pages)||!Array.isArray(data.campaigns))return;
       remote=data;
       if(!pageSent){track('page_view');pageSent=true;}
+      shareAttribution();
     }catch{}
   }
   window.wbmAnalyticsConsent=consent;
@@ -59,6 +79,7 @@
     document.addEventListener('focusin',e=>{try{if(e.target.closest(config.formSelector))window.wbmWebsiteEvent('enquiry_start')}catch{}},{passive:true});
     document.addEventListener('wpcf7mailsent',e=>{try{if(e.target.matches(config.formSelector)||e.target.querySelector(config.formSelector))track('enquiry_success')}catch{}});
   }
+  enquiryFrame()?.addEventListener('load',()=>shareAttribution());
   function prompt(){
     if(blocked())return;
     document.querySelector('#wbm-insights-prompt')?.remove();

@@ -1,5 +1,5 @@
 Weddings By Mark Growth Engine
-Version: 1.5.1
-Build: 2026.09.09-admin-settings-v1.5.1
-Admin settings, secure Growth password changes and session control.
-Compatible with deployed Booking V8.43.1; no Booking changes.
+Version: 1.6.0
+Build: 2026.09.09-website-revenue-attribution-v1.6.0
+Consent-safe website-to-Booking attribution and plain-English booked-value reporting.
+Designed for BookingSystem2026 V8.47 and WBM Website Insights V1.1.0.

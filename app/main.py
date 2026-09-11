@@ -18,7 +18,7 @@ from .config import get_settings
 from .intelligence import router as intelligence_router
 from .gaps import router as gaps_router
 from .planning import router as planning_router
-from .website import router as website_router, website_loop
+from .website import match_attribution, router as website_router, website_loop
 from .account import router as account_router
 from .db import Base, SessionLocal, engine, get_db
 from .models import Activity, Admin, Automation, BookingEventReceipt, Lead, Proposal, BookingInsight
@@ -50,10 +50,13 @@ def bootstrap() -> None:
     Base.metadata.create_all(engine)
     columns = {column["name"] for column in inspect(engine).get_columns("leads")}
     admin_columns = {column["name"] for column in inspect(engine).get_columns("admins")}
+    website_visit_columns = {column["name"] for column in inspect(engine).get_columns("website_visits")}
     additions = {
         "deposit_amount": "NUMERIC(10, 2)",
         "quote_status": "VARCHAR(30)",
         "quote_items": "JSON",
+        "website_visit_id": "VARCHAR(64)",
+        "is_test": "BOOLEAN NOT NULL DEFAULT FALSE",
     }
     with engine.begin() as connection:
         if "session_version" not in admin_columns:
@@ -61,6 +64,9 @@ def bootstrap() -> None:
         for name, sql_type in additions.items():
             if name not in columns:
                 connection.execute(text(f"ALTER TABLE leads ADD COLUMN {name} {sql_type}"))
+        if "landing_path" not in website_visit_columns:
+            connection.execute(text("ALTER TABLE website_visits ADD COLUMN landing_path VARCHAR(200)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_leads_website_visit_id ON leads (website_visit_id)"))
     with SessionLocal() as db:
         admin = db.scalar(select(Admin).where(Admin.email == settings.admin_email))
         if not admin:
@@ -80,7 +86,7 @@ async def lifespan(_: FastAPI):
             await website_task
 
 
-app = FastAPI(title=settings.app_name, version="1.5.1", docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="1.6.0", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 app.include_router(intelligence_router)
 app.include_router(gaps_router)
@@ -298,6 +304,7 @@ def booking_enquiry_webhook(payload: BookingWebhookIn, x_integration_key: str | 
     was_existing = bool(existing)
     availability = check_booking_availability(payload.event_date)
     new_stage = booking_stage(payload)
+    matched_visit_id = None if payload.is_test else match_attribution(db, payload.website_attribution)
     if existing:
         lead = existing
         previous_stage = lead.stage
@@ -318,6 +325,11 @@ def booking_enquiry_webhook(payload: BookingWebhookIn, x_integration_key: str | 
         lead.deposit_amount = payload.deposit_amount
         lead.quote_status = payload.quote_status
         lead.quote_items = payload.quote_items
+        lead.is_test = payload.is_test
+        if payload.is_test:
+            lead.website_visit_id = None
+        elif matched_visit_id and lead.website_visit_id in (None, matched_visit_id):
+            lead.website_visit_id = matched_visit_id
         lead.booking_sync_status = "source"
         lead.booking_sync_error = None
         lead.stage = new_stage if payload.intelligence else merged_booking_stage(previous_stage, new_stage)
@@ -335,7 +347,8 @@ def booking_enquiry_webhook(payload: BookingWebhookIn, x_integration_key: str | 
                     landing_page=payload.landing_page, campaign=payload.campaign, message=payload.message,
                     availability=availability, booking_sync_status="source", stage=new_stage,
                     estimated_value=payload.estimated_value, deposit_amount=payload.deposit_amount,
-                    quote_status=payload.quote_status, quote_items=payload.quote_items)
+                    quote_status=payload.quote_status, quote_items=payload.quote_items,
+                    website_visit_id=matched_visit_id, is_test=payload.is_test)
         db.add(lead)
         db.flush()
         db.add(Activity(lead_id=lead.id, kind="enquiry_received", label="Booking-system enquiry received",

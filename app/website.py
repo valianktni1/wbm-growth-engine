@@ -24,12 +24,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .config import get_settings
 from .db import SessionLocal, get_db
-from .models import Setting, WebsiteVisit, WebsiteEvent
+from .models import Lead, Setting, WebsiteVisit, WebsiteEvent
 from .security import current_admin, csrf_admin
 
 router = APIRouter()
 ORIGINS = {'https://perfectweddingsbymark.uk', 'https://www.perfectweddingsbymark.uk'}
 SOURCES = {'Google', 'Facebook', 'Instagram', 'Bing', 'Other website', 'Direct / unknown'}
+PRIVATE_PATH_PARTS = {'wp-admin', 'wp-json', 'bookings', 'p', 'login', 'client', 'admin'}
 SCOPES = ['https://www.googleapis.com/auth/webmasters.readonly']
 sync_lock = threading.Lock()
 rate_lock = threading.Lock()
@@ -50,6 +51,42 @@ def put_value(db, key, value):
 
 def config(db):
     return get_value(db, 'website-config', {'enabled': False, 'token': '', 'pages': {'/': 'Home page', '/packages/': 'Packages & prices', '/contact/': 'Contact & enquiries'}, 'goals_ready': False, 'campaigns': {}, 'started_at': None})
+
+
+def safe_public_path(path: str) -> bool:
+    parts = path.lower().split('/') if path else []
+    return bool(re.fullmatch(r'/[a-zA-Z0-9/_-]{0,199}', path or '')) and not any(
+        part in PRIVATE_PATH_PARTS or part.startswith('private') for part in parts
+    )
+
+
+def visit_hash(raw_visit_id: str) -> str:
+    return hmac.new(
+        get_settings().session_secret.encode(), raw_visit_id.encode(), hashlib.sha256
+    ).hexdigest()
+
+
+def match_attribution(db: Session, attribution) -> str | None:
+    """Return a stored visit only when every anonymous claim matches our own evidence."""
+    if attribution is None or not safe_public_path(attribution.landing_path):
+        return None
+    hashed = visit_hash(attribution.visit_id)
+    visit = db.get(WebsiteVisit, hashed)
+    if not visit or visit.source != attribution.source or visit.campaign != attribution.campaign:
+        return None
+    started = utc(visit.started_at)
+    if started < now() - timedelta(days=90) or started > now() + timedelta(minutes=5):
+        return None
+    page_seen = db.scalar(select(WebsiteEvent.id).where(
+        WebsiteEvent.visit_id == hashed,
+        WebsiteEvent.kind == 'page_view',
+        WebsiteEvent.path == attribution.landing_path,
+    ).limit(1))
+    if not page_seen or (visit.landing_path and visit.landing_path != attribution.landing_path):
+        return None
+    if not visit.landing_path:
+        visit.landing_path = attribution.landing_path
+    return hashed
 
 
 class WebsiteConfig(BaseModel):
@@ -114,7 +151,8 @@ def public_config(request: Request, token: str='', db: Session=Depends(get_db)):
     from fastapi.responses import JSONResponse
     cfg, headers = allowed(request, db)
     if not hmac.compare_digest(token, cfg['token']): raise HTTPException(403, 'Unknown website')
-    return JSONResponse({'pages': list(cfg['pages']), 'goals_ready': cfg['goals_ready'], 'campaigns': list(cfg['campaigns'])}, headers=headers)
+    return JSONResponse({'pages': list(cfg['pages']), 'measure_all_public': True,
+                         'goals_ready': cfg['goals_ready'], 'campaigns': list(cfg['campaigns'])}, headers=headers)
 
 
 class EventIn(BaseModel):
@@ -147,23 +185,27 @@ async def collect(request: Request, db: Session=Depends(get_db)):
     try: payload = EventIn.model_validate(await small_json(request, 2048))
     except ValidationError: raise HTTPException(422, 'Invalid website event')
     if not hmac.compare_digest(payload.token, cfg['token']): raise HTTPException(403, 'Unknown website')
-    if payload.path not in cfg['pages']: raise HTTPException(422, 'Page is not enabled for measurement')
+    if not safe_public_path(payload.path): raise HTTPException(422, 'Page is not safe for measurement')
     if payload.source not in SOURCES: raise HTTPException(422, 'Unknown source')
     if payload.kind != 'page_view' and not cfg['goals_ready']: raise HTTPException(409, 'Enquiry tracking has not been verified')
     if payload.campaign and payload.campaign not in cfg['campaigns']: raise HTTPException(422, 'Unknown campaign')
-    visit_id = hmac.new(get_settings().session_secret.encode(), str(payload.visit_id).encode(), hashlib.sha256).hexdigest()
+    visit_id = visit_hash(str(payload.visit_id))
     enforce_rate(visit_id)
     if db.get(WebsiteEvent, str(payload.event_id)): return Response(status_code=204, headers=headers)
     visit = db.get(WebsiteVisit, visit_id)
     if not visit:
-        visit = WebsiteVisit(id=visit_id, source=payload.source, campaign=payload.campaign, device=payload.device)
+        visit = WebsiteVisit(id=visit_id, source=payload.source, campaign=payload.campaign,
+                             device=payload.device, landing_path=payload.path)
         try:
             with db.begin_nested():
                 db.add(visit); db.flush()
         except IntegrityError:
             visit = db.get(WebsiteVisit, visit_id)
             if visit is None: raise HTTPException(409, 'Please retry this visit')
-    # Campaign and source describe the beginning of the visit; subsequent events cannot overwrite them.
+    # Campaign, source and landing page describe the beginning of the visit;
+    # subsequent events cannot overwrite them.
+    if not visit.landing_path:
+        visit.landing_path = payload.path
     db.add(WebsiteEvent(id=str(payload.event_id), visit_id=visit_id, kind=payload.kind, path=payload.path))
     try: db.commit()
     except IntegrityError:
@@ -183,14 +225,51 @@ def period_counts(db, start, end, cfg):
         for vid, kind, count in rows: grouped.setdefault(vid, {})[kind] = count
     starters = {vid for vid, kinds in grouped.items() if 'enquiry_start' in kinds}
     completed = {vid for vid, kinds in grouped.items() if 'enquiry_success' in kinds}
+    linked = db.scalars(select(Lead).where(
+        Lead.website_visit_id.in_(ids), Lead.is_test.is_(False)
+    )).all() if ids else []
+    leads_by_visit = {}
+    for lead in linked:
+        leads_by_visit.setdefault(lead.website_visit_id, []).append(lead)
+
+    def outcomes(chosen_visits):
+        chosen_ids = {visit.id for visit in chosen_visits}
+        rows = [lead for visit_id in chosen_ids for lead in leads_by_visit.get(visit_id, [])]
+        accepted = [lead for lead in rows if lead.stage in {'engaged', 'booked'}]
+        booked = [lead for lead in rows if lead.stage == 'booked']
+        return {
+            'linked_enquiries': len(rows),
+            'quote_accepted': len(accepted),
+            'bookings': len(booked),
+            'booked_value': float(sum((lead.estimated_value or 0) for lead in booked)),
+        }
+
     sources = []
     for source, count in Counter(v.source for v in visits).most_common():
-        sources.append({'name': source, 'visits': count, 'enquiries': sum(v.id in completed for v in visits if v.source == source)})
+        matching = [v for v in visits if v.source == source]
+        sources.append({'name': source, 'visits': count,
+                        'enquiries': sum(v.id in completed for v in matching), **outcomes(matching)})
     pages = db.execute(select(WebsiteEvent.path, func.count()).where(WebsiteEvent.occurred_at >= start, WebsiteEvent.occurred_at < end, WebsiteEvent.kind == 'page_view').group_by(WebsiteEvent.path).order_by(func.count().desc()).limit(20)).all()
     campaigns = []
     for slug, count in Counter(v.campaign for v in visits if v.campaign).most_common():
-        campaigns.append({'name': cfg['campaigns'].get(slug, {}).get('name', slug), 'visits': count, 'enquiries': sum(v.id in completed for v in visits if v.campaign == slug)})
-    return {'visits': len(visits), 'views': sum(k.get('page_view', 0) for k in grouped.values()), 'starts': len(starters), 'enquiries': len(completed), 'started_and_completed': len(starters & completed), 'date_checks': sum('date_check' in k for k in grouped.values()), 'sources': sources, 'pages': [{'name': cfg['pages'].get(p, p), 'views': c} for p, c in pages], 'campaigns': campaigns, 'devices': dict(Counter(v.device for v in visits))}
+        matching = [v for v in visits if v.campaign == slug]
+        campaigns.append({'name': cfg['campaigns'].get(slug, {}).get('name', slug),
+                          'visits': count, 'enquiries': sum(v.id in completed for v in matching),
+                          **outcomes(matching)})
+    page_views = dict(pages)
+    landing_paths = set(page_views) | {v.landing_path for v in visits if v.landing_path}
+    page_rows = []
+    for path in landing_paths:
+        matching = [v for v in visits if v.landing_path == path]
+        page_rows.append({'name': cfg['pages'].get(path, path), 'path': path,
+                          'views': page_views.get(path, 0), **outcomes(matching)})
+    page_rows.sort(key=lambda row: (-row['views'], row['name']))
+    return {'visits': len(visits), 'views': sum(k.get('page_view', 0) for k in grouped.values()),
+            'starts': len(starters), 'enquiries': len(completed),
+            'started_and_completed': len(starters & completed),
+            'date_checks': sum('date_check' in k for k in grouped.values()),
+            **outcomes(visits), 'sources': sources, 'pages': page_rows[:20],
+            'campaigns': campaigns, 'devices': dict(Counter(v.device for v in visits))}
 
 
 @router.get('/api/admin/website/report')
@@ -211,7 +290,7 @@ def report(days: int=28, _=Depends(current_admin), db: Session=Depends(get_db)):
     if cfg['goals_ready'] and current['starts'] >= 20 and current['started_and_completed'] / current['starts'] < .5:
         tips.append(f"{current['starts']} visits started an enquiry; {current['started_and_completed']} of those also recorded a successful submission. Try the form on your phone. This alone does not prove a fault.")
     google = get_value(db, 'website-google-report')
-    return {'days': days, 'start': start.date().isoformat(), 'end': (end - timedelta(days=1)).date().isoformat(), 'current': current, 'previous': previous, 'comparison_ready': coverage, 'enabled': cfg['enabled'], 'goals_ready': cfg['goals_ready'], 'last_event': utc(last).isoformat() if last else None, 'tracking_since': cfg['started_at'], 'tips': tips, 'google': google, 'google_status': get_value(db, 'website-google-status', {}), 'google_connected': bool(get_value(db, 'website-google')), 'booking_attribution': 'Not connected. Website enquiry counts are measured submissions; they are not matched to Booking records yet.'}
+    return {'days': days, 'start': start.date().isoformat(), 'end': (end - timedelta(days=1)).date().isoformat(), 'current': current, 'previous': previous, 'comparison_ready': coverage, 'enabled': cfg['enabled'], 'goals_ready': cfg['goals_ready'], 'last_event': utc(last).isoformat() if last else None, 'tracking_since': cfg['started_at'], 'tips': tips, 'google': google, 'google_status': get_value(db, 'website-google-status', {}), 'google_connected': bool(get_value(db, 'website-google')), 'booking_attribution': {'connected': True, 'scope': 'Only new website enquiries carrying a verified consenting visit can be linked. Test records are excluded.'}}
 
 
 class CampaignIn(BaseModel):

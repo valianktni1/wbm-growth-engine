@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class LoginIn(BaseModel):
@@ -63,6 +63,14 @@ class IntelligenceIn(BaseModel):
     mail_checked_at: datetime | None = None
 
 
+class WebsiteAttributionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    visit_id: str = Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+    source: Literal["Google", "Facebook", "Instagram", "Bing", "Other website", "Direct / unknown"]
+    campaign: str = Field(default="", pattern=r"^(?:|[0-9a-f]{12})$")
+    landing_path: str = Field(min_length=1, max_length=200, pattern=r"^/[a-zA-Z0-9/_-]{0,199}$")
+
+
 class BookingWebhookIn(BaseModel):
     intelligence: IntelligenceIn | None = None
     event_id: str | None = Field(default=None, min_length=8, max_length=160)
@@ -89,6 +97,7 @@ class BookingWebhookIn(BaseModel):
     is_test: bool = False
     received_at: datetime | None = None
     updated_at: datetime | None = None
+    website_attribution: WebsiteAttributionIn | None = None
 
 
 class LeadPatchIn(BaseModel):

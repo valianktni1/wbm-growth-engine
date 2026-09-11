@@ -1,6 +1,6 @@
 # Website performance — setup guide
 
-This release adds the reporting section to Growth. No Booking update, extra Docker service or new dataset is needed. It uses the existing Growth database and storage dataset. It does not change your website until you install and enable the WordPress plugin.
+V1.6 connects the website report to Booking V8.47. No extra Docker service or new dataset is needed. It uses the existing Growth database and storage dataset. It does not change WordPress until you install the updated plugin and replace the two supplied website code blocks.
 
 ## 1. Deploy Growth
 
@@ -11,17 +11,17 @@ On TrueNAS:
 ```bash
 cd /mnt/apps/dockge/data/wbm-growth-engine
 sudo git pull --ff-only origin main &&
-sudo bash scripts/deploy-v150-growth.sh
+sudo bash scripts/deploy-v160-growth.sh
 ```
 
-The script builds first, tags the old Growth image, creates a readable PostgreSQL backup, updates only the Growth app, and checks its exact build. Readable backup verification is not a complete restore rehearsal. The two analytics tables are added at startup. Booking V8.43.1 remains deployed.
+The script builds first, tags the old Growth image, creates a readable PostgreSQL backup, updates only the Growth app, and checks its exact build. Readable backup verification is not a complete restore rehearsal. New nullable attribution fields are added at startup. Deploy Booking V8.47 after Growth is healthy.
 
 ## 2. Connect website visits
 
 1. Open Growth → Website performance → Connect & manage.
-2. Review the selected public page paths. Home, /packages/ and /contact/ are prefilled from the site's public links. Add other public marketing pages as `path | friendly name`. Paths must match exactly, including trailing slashes.
+2. Review the friendly names for important page paths. All safe public WordPress marketing paths are collected automatically after consent; this list controls the friendly labels and tracked-link destinations. Private, login, admin and client paths remain blocked.
 3. Tick “Enable collection” and save. Leave the form-hooks checkbox unticked for now.
-4. In WordPress → Plugins → Add New → Upload Plugin, upload `wbm-website-insights.zip`, then activate it.
+4. In WordPress → Plugins → Add New → Upload Plugin, upload `wbm-website-insights-v1.1.0.zip`, choose **Replace current with uploaded**, then activate it.
 5. In WordPress → Settings → WBM Website Insights, enter `https://growth.weddingsbymark.uk` and the public Website code from Growth. This is NOT the Booking integration key.
 6. Choose how visitors give their analytics choice. The plugin includes an Allow / No thanks prompt and a persistent withdrawal button. If an existing cookie banner is used, connect its analytics-consent and withdrawal callbacks before disabling the plugin's prompt. Do not run two competing prompts. Collection remains off without an explicit consent signal.
 7. Add accurate analytics information to the website's privacy notice, then enable the plugin's collection setting. This implementation deliberately opts in; it does not assume a legal analytics exemption.
@@ -47,7 +47,7 @@ Google refresh runs roughly every six hours while Growth is running; manual refr
 
 ## 4. Connect enquiry starts, confirmed submissions and date checks
 
-**This requires checking the actual website form/date-check code.** The public site confirms those controls exist, but does not establish which submission callback is authoritative. Do not guess based on a click or a visible thank-you message.
+Booking V8.47 and plugin V1.1.0 now provide the checked cross-origin bridge for the actual enquiry iframe. Replace the Contact-page HTML widget with `wordpress/CONTACT-ENQUIRY-EMBED-V1.6.html`. An enquiry start is counted on first form interaction and success only after Booking confirms creation.
 
 The plugin exposes these browser hooks, and ignores them until consent is granted and Growth's verified-hooks option is enabled:
 
@@ -66,11 +66,11 @@ window.wbmAnalyticsConsent?.(true);  // analytics granted
 window.wbmAnalyticsConsent?.(false); // analytics declined or withdrawn
 ```
 
-An optional form selector records first focus. A matching Contact Form 7 `wpcf7mailsent` event is supported; do not configure it unless that is the actual enquiry form. Generic form submissions, validation errors, failed API responses and button clicks must not count as success. Cross-origin embedded Booking forms need a specific consent-aware bridge; the parent plugin cannot inspect them automatically. Provide the latest website/form source for that part.
+Replace the homepage date-checker widget with `wordpress/HOMEPAGE-DATE-CHECKER-V1.6.html`. It records one date-check event only after the diary request completes successfully and never sends the selected date.
 
-Once connected, test success, validation failure, server failure, double clicks and consent withdrawal before ticking Growth's verified-hooks checkbox.
+Once both blocks are installed, test one date check and one test-mode enquiry after choosing Allow, then tick Growth's verified-hooks checkbox.
 
-**Automatic matching to Booking IDs and agreed booking value is not part of V1.5.0.** The screen labels this honestly and links to the existing Booking performance report. That bridge needs a separately reviewed change to the website enquiry route and Booking payload; no matching by email address is attempted here.
+The visit is matched through a random consented ID, never by the couple's email address. Growth verifies the visit against its own hashed record, source, campaign and landing-page event before linking it. Invalid/stale details are ignored without blocking the Booking sync. Test-mode Booking records are excluded.
 
 ## 5. Use it day to day
 
@@ -80,7 +80,7 @@ Once connected, test success, validation failure, server failure, double clicks 
 - Use the tracked-link generator before posting on Facebook or Instagram. Campaign names stay in Growth; the link contains a generated campaign code. Results are source-labelled observations, not proof of causal lift.
 - A source is fixed when a visit begins. An existing visit clicking another campaign will keep its original source until the session expires.
 - The comparison requires a full previous period since collection was enabled. No difference is invented from missing history. You still need to check the “Last activity received” indicator for outages.
-- Only allowlisted public paths are collected; query strings, full referrer URLs, form content, requested dates, IPs and email addresses are not stored in these analytics tables. Ordinary proxy/server logs are separate.
+- Safe public WordPress paths are collected after consent; private/admin/client paths, query strings, full referrer URLs, form content, requested dates, IPs and email addresses are not stored in these analytics tables. Ordinary proxy/server logs are separate.
 - Website events are removed after 90 days by hourly maintenance. Consent preference is stored in local storage; visit IDs live in session storage. Withdrawing stops future collection and clears that browser's session ID; it does not retroactively delete already-recorded events.
 
 References: [Search Console query API](https://developers.google.com/webmaster-tools/v1/searchanalytics/query), [Google service-account credentials](https://google-auth.readthedocs.io/en/latest/reference/google.oauth2.service_account.html), [ICO storage/access guidance](https://ico.org.uk/for-organisations/direct-marketing-and-privacy-and-electronic-communications/guidance-on-the-use-of-storage-and-access-technologies/).

@@ -48,6 +48,8 @@ class Lead(Base):
     deposit_amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
     quote_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
     quote_items: Mapped[list] = mapped_column(JSON, default=list)
+    website_visit_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    is_test: Mapped[bool] = mapped_column(Boolean, default=False)
     booking_sync_status: Mapped[str] = mapped_column(String(30), default="not_requested")
     booking_sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     privacy_agreed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -161,6 +163,7 @@ class WebsiteVisit(Base):
     source: Mapped[str] = mapped_column(String(30))
     campaign: Mapped[str] = mapped_column(String(80), default='')
     device: Mapped[str] = mapped_column(String(20))
+    landing_path: Mapped[str | None] = mapped_column(String(200), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
